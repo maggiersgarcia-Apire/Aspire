@@ -1,5 +1,5 @@
 {
-  "name": "aspire-reimbursement-auditor",
+  "name": "aspire-reimbursement",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -12,7 +12,10 @@
     "react-dom": "^19.2.4",
     "@google/genai": "^1.41.0",
     "react": "^19.2.4",
-    "lucide-react": "^0.564.0"
+    "lucide-react": "^0.564.0",
+    "@supabase/supabase-js": "2.39.3",
+    "fflate": "0.8.2",
+    "xlsx": "0.18.5"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

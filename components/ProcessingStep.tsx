@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle2, Circle, Loader2 } from 'lucide-react';
+import { CheckCircle, Circle, Loader2 } from 'lucide-react';
 
 interface ProcessingStepProps {
   status: 'idle' | 'processing' | 'complete' | 'error';
@@ -11,7 +11,7 @@ const ProcessingStep: React.FC<ProcessingStepProps> = ({ status, title, descript
   return (
     <div className="flex items-start group">
       <div className="flex-shrink-0 mt-0.5">
-        {status === 'complete' && <CheckCircle2 className="h-6 w-6 text-lime-400 drop-shadow-[0_0_8px_rgba(163,230,53,0.5)]" />}
+        {status === 'complete' && <CheckCircle className="h-6 w-6 text-lime-400 drop-shadow-[0_0_8px_rgba(163,230,53,0.5)]" />}
         {status === 'processing' && <Loader2 className="h-6 w-6 text-cyan-400 animate-spin drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]" />}
         {status === 'idle' && <Circle className="h-6 w-6 text-slate-600 group-hover:text-slate-500 transition-colors" />}
         {status === 'error' && <Circle className="h-6 w-6 text-red-500" />}

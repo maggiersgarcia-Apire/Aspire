@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Upload, X, FileText, Clipboard, Image as ImageIcon } from 'lucide-react';
+import { Upload, X, FileText, Clipboard, Image as ImageIcon, FileSpreadsheet } from 'lucide-react';
 import { FileWithPreview } from '../types';
 import { formatBytes } from '../utils/fileHelpers';
 
@@ -17,8 +17,8 @@ const FileUpload: React.FC<FileUploadProps> = ({
   files,
   onFilesChange,
   multiple = false,
-  accept = "image/*,application/pdf",
-  description = "Support for PNG, JPG, PDF"
+  accept = "image/*,application/pdf,.doc,.docx,.xls,.xlsx,.csv",
+  description = "Support for JPG, PDF, Word, Excel"
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -126,6 +126,19 @@ const FileUpload: React.FC<FileUploadProps> = ({
     };
   }, [isFocused, files, multiple, onFilesChange]);
 
+  const getFileIcon = (file: File) => {
+      if (file.type.startsWith('image/')) {
+          return <img src={(file as FileWithPreview).preview} alt={file.name} className="h-full w-full object-cover" />;
+      }
+      if (file.name.endsWith('.xls') || file.name.endsWith('.xlsx') || file.name.endsWith('.csv')) {
+          return <FileSpreadsheet className="text-emerald-400" />;
+      }
+      if (file.name.endsWith('.doc') || file.name.endsWith('.docx')) {
+          return <FileText className="text-blue-400" />;
+      }
+      return <FileText className="text-slate-400" />;
+  };
+
   return (
     <div className="w-full">
       {/* Header Row: Label Left, Description Right */}
@@ -188,11 +201,7 @@ const FileUpload: React.FC<FileUploadProps> = ({
           {files.map((file, index) => (
             <li key={`${file.name}-${index}`} className="relative flex items-center p-3 border border-white/10 rounded-xl bg-white/5 backdrop-blur-sm group hover:border-white/20 transition-colors">
               <div className="h-10 w-10 flex-shrink-0 overflow-hidden rounded-lg bg-black/20 flex items-center justify-center border border-white/5">
-                {file.type.startsWith('image/') ? (
-                  <img src={file.preview} alt={file.name} className="h-full w-full object-cover" />
-                ) : (
-                  <FileText className="text-slate-400" />
-                )}
+                {getFileIcon(file)}
               </div>
               <div className="ml-4 flex-1 min-w-0">
                 <p className="text-sm font-medium text-slate-200 truncate">{file.name}</p>
