@@ -525,15 +525,9 @@ const App: React.FC = () => {
   };
 
   // Helper to extract fields for reports from stored content (For NAB/EOD tabs)
-  const extractReportData = (records: any[]) => {
-      const today = new Date().toDateString();
-      // Filter for today's records
-      const todaysRecords = records.filter(r => new Date(r.created_at).toDateString() === today);
-
-      // Sort by creation time (Oldest first for schedule calculation)
-      const sortedRecords = todaysRecords.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-
-      return sortedRecords.map(r => {
+  // MODIFIED: Takes raw records and returns processed records without filtering by date initially
+  const processRecords = (records: any[]) => {
+      return records.map(r => {
           const content = r.full_email_content || "";
           
           const nabRefMatch = content.match(/\*\*NAB Reference:?\*\*?\s*(.*?)(?:\n|$)/i);
@@ -565,9 +559,10 @@ const App: React.FC = () => {
               clientName: clientName,
               isDiscrepancy: isDiscrepancy,
               discrepancyReason: discrepancyReason,
-              // Original time for NAB log, but will be overridden for EOD
               time: new Date(r.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              date: new Date(r.created_at).toLocaleDateString()
+              date: new Date(r.created_at).toLocaleDateString(),
+              // Helper for Today check
+              isToday: new Date(r.created_at).toDateString() === new Date().toDateString()
           };
       });
   };
@@ -683,24 +678,35 @@ const App: React.FC = () => {
       };
   };
 
-  const reportData = extractReportData(historyData);
-  
-  // EOD Schedule Data
-  const eodData = generateEODSchedule(reportData);
-  
-  // Calculate Counts for EOD Header
-  const reimbursementCount = reportData.filter(r => !r.isDiscrepancy).length;
-  const pendingCount = reportData.filter(r => r.isDiscrepancy).length;
-  
-  // MODIFIED PENDING RECORDS CALCULATION: Filter out locally resolved items
-  const pendingRecords = reportData.filter(r => r.isDiscrepancy && !dismissedIds.includes(r.id));
+  // DATA PROCESSING LOGIC UPDATE
+  const allProcessedRecords = useMemo(() => processRecords(historyData), [historyData]);
 
-  // NAB Log only shows successes (No Discrepancies)
-  const nabReportData = reportData.filter(r => !r.isDiscrepancy);
-  // Total calculation based on NAB Report (actual payments)
+  // Today's records for EOD Schedule & NAB Log
+  const todaysProcessedRecords = useMemo(() => {
+      return allProcessedRecords
+        .filter(r => r.isToday)
+        .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  }, [allProcessedRecords]);
+
+  // Outstanding Discrepancies (ALL TIME - Persistent until dismissed)
+  const pendingRecords = useMemo(() => {
+      return allProcessedRecords
+          .filter(r => r.isDiscrepancy && !dismissedIds.includes(r.id))
+          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()); // Newest first
+  }, [allProcessedRecords, dismissedIds]);
+
+  // Derived Data for Views
+  const eodData = generateEODSchedule(todaysProcessedRecords);
+  
+  // Counts for Today (EOD Header)
+  const reimbursementCount = todaysProcessedRecords.filter(r => !r.isDiscrepancy).length;
+  // This pending count in header usually refers to today's pending items found
+  const pendingCountToday = todaysProcessedRecords.filter(r => r.isDiscrepancy).length;
+
+  // NAB Log (Today)
+  const nabReportData = todaysProcessedRecords.filter(r => !r.isDiscrepancy);
   const totalAmount = nabReportData.reduce((sum, r) => sum + parseFloat(r.amount.replace(/[^0-9.-]+/g,"")), 0);
   
-  // Get current payment details
   const dashboardPaymentDetails = getDashboardPaymentDetails();
 
   // Splash Screen Render
@@ -1108,7 +1114,7 @@ const App: React.FC = () => {
                     {/* HEADER SUMMARY SECTION */}
                     <div className="flex gap-4 mb-4 text-slate-400 font-mono text-sm">
                         <div className="bg-white/5 px-4 py-2 rounded border border-white/10">Date: <span className="text-white">{new Date().toDateString()}</span></div>
-                        <div className="bg-white/5 px-4 py-2 rounded border border-white/10">TOTAL - Reimbursement: <span className="text-emerald-400 font-bold">{reimbursementCount}</span> | Pending: <span className="text-red-400 font-bold">{pendingCount}</span></div>
+                        <div className="bg-white/5 px-4 py-2 rounded border border-white/10">TOTAL - Reimbursement: <span className="text-emerald-400 font-bold">{reimbursementCount}</span> | Pending: <span className="text-red-400 font-bold">{pendingCountToday}</span></div>
                     </div>
 
                     {/* THIS TABLE IS DESIGNED TO BE COPIED TO OUTLOOK - INLINE STYLES ARE CRITICAL */}
@@ -1163,13 +1169,13 @@ const App: React.FC = () => {
                         </div>
                         {pendingRecords.length === 0 ? (
                             <div className="p-6 text-center text-slate-500 text-sm">
-                                No pending discrepancies found for today. Good job!
+                                No pending discrepancies found for today (or all cleared). Good job!
                             </div>
                         ) : (
                             <table className="w-full text-left text-xs">
                                 <thead>
                                     <tr className="border-b border-red-500/10 text-red-200">
-                                        <th className="px-6 py-3 font-medium">Time</th>
+                                        <th className="px-6 py-3 font-medium">Time / Date</th>
                                         <th className="px-6 py-3 font-medium">Staff Member</th>
                                         <th className="px-6 py-3 font-medium">Client</th>
                                         <th className="px-6 py-3 font-medium">Discrepancy Details</th>
@@ -1179,7 +1185,9 @@ const App: React.FC = () => {
                                 <tbody className="divide-y divide-red-500/10">
                                     {pendingRecords.map((record) => (
                                         <tr key={record.id} className="hover:bg-red-500/5 transition-colors">
-                                            <td className="px-6 py-3 text-slate-400">{record.time}</td>
+                                            <td className="px-6 py-3 text-slate-400">
+                                                {record.isToday ? record.time : <span className="text-slate-500">{record.date} {record.time}</span>}
+                                            </td>
                                             <td className="px-6 py-3 text-white font-medium uppercase">{record.staff_name}</td>
                                             <td className="px-6 py-3 text-slate-300">{record.clientName}</td>
                                             <td className="px-6 py-3 text-red-300">{record.discrepancyReason}</td>

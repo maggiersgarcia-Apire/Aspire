@@ -81,9 +81,10 @@ Block 2: [Numeric Total, e.g., 48.95]
 
 ## PHASE 3: THE AUDIT (CRITICAL RULES)
 RULE 1: The Integrity Check (Form vs. Receipt)
-Compare [Total Amount from Phase 2] vs. [Total Amount from Phase 1].
-IF MISMATCH: STOP. Do not proceed to Rule 2. Generate Email Type A (Discrepancy).
-IF MATCH: Proceed to Rule 2.
+Compare [Total Amount from Phase 2] (Form) vs. [Total Amount from Phase 1] (Receipt).
+* **Ruling:** If the Reimbursement Form Amount is **HIGHER** (or different) than the Receipt Amount, **DO NOT STOP**. Just **PROCEED** to Rule 2.
+* **Action:** Adopt the **Receipt Amount** (from Phase 1) as the final correct amount for the email and proceed.
+* **Exceptions:** Only trigger a "Discrepancy" (Email Type A) if the receipts are completely missing, illegible, or significantly unrelated. For amount mismatches, prefer to proceed using the Receipt Amount.
 
 RULE 2: Duplicate Check
 Check if this receipt details (Store, Date, Amount) have been processed before in this session.
@@ -98,7 +99,7 @@ Is the Receipt Date > 30 days old?
 IF YES: Trigger Email Type C (Julian Approval - Late).
 
 RULE 5: All Good
-If Matches Exactly + <$300 + <30 Days + No Issues.
+If Matches Exactly OR if Form Amount > Receipt Amount (Proceeded via Rule 1) + <$300 + <30 Days + No Issues.
 Action: Trigger Email Type B (Success).
 
 ---
@@ -106,15 +107,16 @@ Action: Trigger Email Type B (Success).
 ## PHASE 4: EMAIL GENERATION (OUTPUT)
 Output ONLY the correct Email based on the audit result.
 
-**EMAIL TYPE A: DISCREPANCY (Form vs Receipt Mismatch)**
+**EMAIL TYPE A: DISCREPANCY (Critical Issues Only)**
 *Instructions:*
-1. State clearly that a discrepancy was found.
-2. Show the "Amount on Form" vs "Amount on Receipt".
-3. **CRITICAL:** Include the **Detailed Itemization Table** from Phase 1 so the claimant sees exactly what items were detected.
-4. Include **Client / Location** so we can track who this is for.
-5. Ask them to resubmit with the correct amount.
-6. **DO NOT** include a sign-off or signature.
-7. **DO NOT** include a Subject line.
+1. Use this only if receipts are missing, illegible, or fundamental data is wrong (not just amount mismatch).
+2. State clearly that a discrepancy was found.
+3. Show the "Amount on Form" vs "Amount on Receipt".
+4. **CRITICAL:** Include the **Detailed Itemization Table** from Phase 1 so the claimant sees exactly what items were detected.
+5. Include **Client / Location** so we can track who this is for.
+6. Ask them to resubmit.
+7. **DO NOT** include a sign-off or signature.
+8. **DO NOT** include a Subject line.
 
 **Template:**
 Hi [First Name],
@@ -127,17 +129,13 @@ I am writing to inform you that a discrepancy was found during the audit of your
 **Client / Location:** [Client Name/Location]
 **Amount:** $[Receipt Amount]
 
-The total amount declared on your reimbursement form is **$[Form Amount]**, but the total amount calculated from the attached receipts is **$[Receipt Amount]**.
+[Explain the specific critical issue, e.g., missing receipt, illegible date, etc.]
 
 Here is the full breakdown of the items analyzed from your receipts:
 
 [INSERT DETAILED TABLE FROM PHASE 1 HERE]
 
-**Summary:**
-*   Amount on Form: $[Form Amount]
-*   Actual Receipt Total: $[Receipt Amount]
-
-Please update the reimbursement form to reflect the correct total of **$[Receipt Amount]** and resubmit it so we can finalize the processing.
+Please update the reimbursement form and resubmit it so we can finalize the processing.
 
 **EMAIL TYPE B: SUCCESS CONFIRMATION (Standard <$300)**
 *Instructions:*
@@ -159,7 +157,7 @@ I am writing to confirm that your reimbursement request has been successfully pr
 **Staff Member:** [Last Name, First Name]
 **Client / Location:** [Client Name/Location]
 **Approved By:** [Approver Name]
-**Amount:** $[Total Amount]
+**Amount:** $[Total Amount] (Based on Receipts)
 **Receipt ID:** [Receipt ID found in Phase 1]
 **NAB Reference:** PENDING
 
