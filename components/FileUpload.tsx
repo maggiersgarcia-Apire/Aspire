@@ -1,5 +1,5 @@
-import React, { useRef, useState, useEffect } from 'react';
-import { Upload, X, FileText, Clipboard, Image as ImageIcon, FileSpreadsheet } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { Upload, X, FileText, FileSpreadsheet } from 'lucide-react';
 import { FileWithPreview } from '../types';
 import { formatBytes } from '../utils/fileHelpers';
 
@@ -105,26 +105,11 @@ const FileUpload: React.FC<FileUploadProps> = ({
   };
 
   const handlePaste = (e: React.ClipboardEvent) => {
+    // Only handle if focused to avoid conflicts, though React's onPaste usually implies focus or bubbling
     if (handlePasteLogic(e.clipboardData)) {
         e.preventDefault();
     }
   };
-
-  // Global paste handler when focused
-  useEffect(() => {
-    const handleGlobalPaste = (e: ClipboardEvent) => {
-      if (isFocused) {
-         if (handlePasteLogic(e.clipboardData)) {
-             e.preventDefault();
-         }
-      }
-    };
-
-    window.addEventListener('paste', handleGlobalPaste);
-    return () => {
-      window.removeEventListener('paste', handleGlobalPaste);
-    };
-  }, [isFocused, files, multiple, onFilesChange]);
 
   const getFileIcon = (file: File) => {
       if (file.type.startsWith('image/')) {
@@ -177,7 +162,7 @@ const FileUpload: React.FC<FileUploadProps> = ({
 
           <div className="space-y-1">
             <p className="text-sm font-medium text-slate-300">
-              <span className="text-indigo-400 hover:text-indigo-300 underline decoration-dotted underline-offset-2">Upload files</span>, paste screenshots, or drag & drop
+              <span className="text-indigo-400 hover:text-indigo-300 underline decoration-dotted underline-offset-2">Upload files</span>, Paste, or Drag & Drop
             </p>
             <p className="text-xs text-slate-500">
                {multiple ? "Multiple files allowed" : "Single file"} • Ctrl+V to paste
