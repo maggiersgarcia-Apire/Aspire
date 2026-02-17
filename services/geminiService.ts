@@ -191,12 +191,20 @@ export const analyzeReimbursement = async (
       body: JSON.stringify({ parts }),
     });
 
-    const data = await response.json();
-
     if (!response.ok) {
-      throw new Error(data.error || "Failed to process audit");
+        // Handle non-JSON errors (like 404 HTML pages from Vercel)
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.indexOf("application/json") !== -1) {
+             const errorData = await response.json();
+             throw new Error(errorData.error || "Failed to process audit");
+        } else {
+             const text = await response.text();
+             console.error("Non-JSON API Response:", text);
+             throw new Error(`Server Error (${response.status}): The API endpoint was not found or returned an invalid response.`);
+        }
     }
 
+    const data = await response.json();
     return data.text;
   } catch (error) {
     console.error("Audit Service Error:", error);
