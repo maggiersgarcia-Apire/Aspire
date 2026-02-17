@@ -228,23 +228,54 @@ export default async function handler(req: any, res: any) {
 
     const ai = new GoogleGenAI({ apiKey });
     
-    // Changed model to gemini-1.5-flash-001 for stability
-    const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash-001", 
-      config: {
-        systemInstruction: ASPIRE_SYSTEM_INSTRUCTION,
-        temperature: 0.1,
-      },
-      contents: {
-          role: "user",
-          parts: parts,
-      },
-    });
+    // Fallback Mechanism Implementation
+    let response;
+    const primaryModel = "gemini-1.5-flash";
+    const fallbackModel = "gemini-pro";
+
+    try {
+        console.log(`[Aspire Audit] Requesting generation with model: ${primaryModel}`);
+        response = await ai.models.generateContent({
+          model: primaryModel,
+          config: {
+            systemInstruction: ASPIRE_SYSTEM_INSTRUCTION,
+            temperature: 0.1,
+          },
+          contents: {
+              role: "user",
+              parts: parts,
+          },
+        });
+    } catch (primaryError: any) {
+        console.warn(`[Aspire Audit] Primary model ${primaryModel} failed. Error: ${primaryError.message}`);
+        
+        // Attempt fallback if 404 or other model-related error
+        console.log(`[Aspire Audit] Attempting fallback to: ${fallbackModel}`);
+        
+        try {
+            response = await ai.models.generateContent({
+                model: fallbackModel,
+                config: {
+                    systemInstruction: ASPIRE_SYSTEM_INSTRUCTION,
+                    temperature: 0.1,
+                },
+                contents: {
+                    role: "user",
+                    parts: parts,
+                },
+            });
+            console.log(`[Aspire Audit] Fallback to ${fallbackModel} successful.`);
+        } catch (fallbackError: any) {
+            console.error(`[Aspire Audit] Fallback model ${fallbackModel} also failed. Error: ${fallbackError.message}`);
+            // Throw the original error or the new one. Usually the primary error is more indicative of the configuration issue.
+            throw new Error(`Model Generation Failed. Primary: ${primaryError.message}. Fallback: ${fallbackError.message}`);
+        }
+    }
 
     return res.status(200).json({ text: response.text });
     
   } catch (error: any) {
-    console.error("Gemini API Error:", error);
+    console.error("Gemini API Fatal Error:", error);
     return res.status(500).json({ error: error.message || "An error occurred during processing." });
   }
 }
