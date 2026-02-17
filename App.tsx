@@ -67,7 +67,7 @@ export const App = () => {
 
   const [isEditing, setIsEditing] = useState(false);
   const [editableContent, setEditableContent] = useState('');
-  const [nabReference, setNabReference] = useState('');
+  // const [nabReference, setNabReference] = useState(''); // Removed simple state in favor of dynamic parsing
   
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error' | 'duplicate'>('idle');
   const [isSaving, setIsSaving] = useState(false);
@@ -123,24 +123,105 @@ export const App = () => {
       setTimeout(() => setSaveEmployeeStatus('idle'), 2000);
   };
 
-  const handleNabReferenceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setNabReference(e.target.value);
-    // Update email content if we have results
-    if (results && results.phase4) {
-        let newContent = isEditing ? editableContent : results.phase4;
-        if (newContent.includes('**NAB Reference:**')) {
-            newContent = newContent.replace(/\*\*NAB Reference:\*\* .*/, `**NAB Reference:** ${e.target.value}`);
-        } else {
-             newContent += `\n**NAB Reference:** ${e.target.value}`;
-        }
-        
-        if (isEditing) {
-            setEditableContent(newContent);
-        } else {
-            setResults({ ...results, phase4: newContent });
-        }
-    }
+  // Helper to parse extracting transactions from the email content (Dynamic for Batch and Single)
+  const getParsedTransactions = () => {
+      const content = isEditing ? editableContent : results?.phase4;
+      if (!content) return [];
+
+      // Split by "**Staff Member:**" to isolate blocks
+      // NOTE: This assumes the template always uses this specific markdown bolding.
+      const parts = content.split('**Staff Member:**');
+      
+      // If only 1 part, it means no "**Staff Member:**" found (header only?), or maybe format issue.
+      if (parts.length <= 1) {
+           // Fallback attempt: check unbolded
+           const unboldedParts = content.split('Staff Member:');
+           if (unboldedParts.length > 1) {
+               return unboldedParts.slice(1).map((part, index) => parseTransactionPart(part, index));
+           }
+           return [];
+      }
+
+      return parts.slice(1).map((part, index) => parseTransactionPart(part, index));
   };
+
+  const parseTransactionPart = (part: string, index: number) => {
+        const lines = part.split('\n');
+        // Staff name is usually the immediate text after the split
+        let staffName = lines[0].trim();
+        
+        // Find amount
+        const amountMatch = part.match(/\*\*Amount:\*\*\s*(.*)/) || part.match(/Amount:\s*(.*)/);
+        let amount = amountMatch ? amountMatch[1].replace('(Based on Receipts/Form Audit)', '').trim() : '0.00';
+        
+        // Find NAB code
+        const nabMatch = part.match(/NAB (?:Code|Reference):(?:\*\*|)\s*(.*)/i);
+        let currentNabRef = nabMatch ? nabMatch[1].trim() : '';
+        if (currentNabRef === 'PENDING') currentNabRef = ''; // Clear pending for input value
+
+        // Find Receipt ID (if exists)
+        const receiptMatch = part.match(/\*\*Receipt ID:\*\*\s*(.*)/) || part.match(/Receipt ID:\s*(.*)/);
+        const receiptId = receiptMatch ? receiptMatch[1].trim() : 'N/A';
+
+        // Format Name (Last, First -> First Last)
+        let formattedName = staffName;
+        if (staffName.includes(',')) {
+            const p = staffName.split(',');
+            if (p.length >= 2) formattedName = `${p[1].trim()} ${p[0].trim()}`;
+        }
+
+        return {
+            index,
+            staffName,
+            formattedName,
+            amount,
+            receiptId,
+            currentNabRef
+        };
+  };
+
+  const parsedTransactions = getParsedTransactions();
+
+  const handleTransactionNabChange = (index: number, newVal: string) => {
+      const content = isEditing ? editableContent : results?.phase4;
+      if (!content) return;
+
+      const marker = '**Staff Member:**';
+      const parts = content.split(marker);
+      
+      // parts[0] is header. parts[1] is transaction 0, parts[2] is transaction 1...
+      // So transaction index maps to parts[index + 1]
+      const partIndex = index + 1;
+
+      if (parts.length <= partIndex) return;
+
+      let targetPart = parts[partIndex];
+      
+      // Replace NAB line
+      // Regex handles "NAB Code:" or "NAB Reference:" with or without bolding
+      if (targetPart.match(/NAB (?:Code|Reference):/i)) {
+          targetPart = targetPart.replace(/NAB (?:Code|Reference):.*/i, `NAB Code: ${newVal}`);
+      } else {
+          // If extracted successfully but regex failed (edge case), append it? 
+          // Unlikely given parseTransactionPart logic, but safe fallback:
+           // Try to find Amount line and append after it
+           if (targetPart.includes('Amount:')) {
+               targetPart = targetPart.replace(/(Amount:.*)/, `$1\n**NAB Code:** ${newVal}`);
+           } else {
+               targetPart += `\n**NAB Code:** ${newVal}`;
+           }
+      }
+
+      parts[partIndex] = targetPart;
+      const newContent = parts.join(marker);
+
+      if (isEditing) {
+          setEditableContent(newContent);
+      } else {
+          setResults({ ...results!, phase4: newContent });
+      }
+  };
+
 
   const showJulianApproval = () => {
       if (!results) return false;
@@ -291,7 +372,7 @@ ${results.phase1}
               }
           }
 
-          // Fallback if no table found (e.g. old data format or parsing fail)
+          // Fallback if no table found (e.g. old data format or parsing fail, OR Petty Cash Batch)
           if (!tableRowsFound) {
               allRows.push({
                   id: `${internalId}-summary`,
@@ -300,8 +381,8 @@ ${results.phase1}
                   timestamp,
                   ypName,
                   staffName,
-                  product: 'N/A',
-                  expenseType: 'Uncategorized (Legacy)',
+                  product: 'Petty Cash / Reimbursement',
+                  expenseType: 'Batch Request',
                   receiptDate: dateProcessed,
                   amount: totalAmount,
                   totalAmount: totalAmount,
@@ -375,7 +456,7 @@ ${results.phase1}
     setEmailCopied(false);
     setSaveStatus('idle');
     setIsEditing(false);
-    setNabReference('');
+    // setNabReference(''); // Removed simple state reset
   };
 
   const handleCopyEmail = async () => {
@@ -435,47 +516,82 @@ ${results.phase1}
     setSaveStatus('idle');
 
     try {
-      const staffNameMatch = contentToSave.match(/\*\*Staff Member:\*\*\s*(.*)/);
-      const amountMatch = contentToSave.match(/\*\*Amount:\*\*\s*(.*)/);
-      const receiptIdMatch = contentToSave.match(/\*\*Receipt ID:\*\*\s*(.*)/);
-      // const nabRefMatch = contentToSave.match(/\*\*NAB Reference:\*\*\s*(.*)/);
-
-      const staffName = staffNameMatch ? staffNameMatch[1].trim() : 'Unknown';
-      // Sanitize Amount
-      const amount = amountMatch ? amountMatch[1].replace('(Based on Receipts/Form Audit)', '').trim() : '0.00';
+      // BATCH PROCESSING LOGIC
+      // Split by "**Staff Member:**" to check if there are multiple people in one email.
+      // NOTE: We split by the bold marker to ensure we get distinct blocks.
+      const staffBlocks = contentToSave.split('**Staff Member:**');
       
-      let uniqueReceiptId = receiptIdMatch ? receiptIdMatch[1].trim() : null;
-      
-      // Fallback for Discrepancies which don't have Receipt ID in the email body
-      // We generate a unique ID so it can be saved to Supabase (assuming nab_code might be a PK or unique)
-      if (!uniqueReceiptId && (contentToSave.toLowerCase().includes('discrepancy') || contentToSave.toLowerCase().includes('mismatch') || contentToSave.includes('STATUS: PENDING'))) {
-          uniqueReceiptId = `DISC-${Date.now()}-${Math.floor(Math.random()*1000)}`;
-      }
+      const payloads = [];
 
-      if (uniqueReceiptId) {
-          const { data: existingData } = await supabase
-              .from('audit_logs')
-              .select('id')
-              .eq('nab_code', uniqueReceiptId)
-              .single();
-          
-          if (existingData) {
-              setSaveStatus('duplicate');
-              setIsSaving(false);
-              setErrorMessage(`Duplicate Receipt Detected! ID: ${uniqueReceiptId} already exists.`);
-              return; 
+      if (staffBlocks.length > 1) {
+          // Multiple transactions found (Batch Petty Cash)
+          // Loop starting from index 1 (index 0 is header before first staff member)
+          for (let i = 1; i < staffBlocks.length; i++) {
+              const block = staffBlocks[i];
+              // Extract details for THIS block
+              const staffNameLine = block.split('\n')[0].trim();
+              
+              // Find amount in this specific block
+              const amountMatch = block.match(/\*\*Amount:\*\*\s*(.*)/);
+              // Find NAB code in this specific block (Allow for bolding or not)
+              const nabMatch = block.match(/NAB (?:Code|Reference):(?:\*\*|)\s*(.*)/i);
+              
+              const staffName = staffNameLine;
+              const amount = amountMatch ? amountMatch[1].replace('(Based on Receipts/Form Audit)', '').trim() : '0.00';
+              let uniqueReceiptId = nabMatch ? nabMatch[1].trim() : null;
+              
+              // If ID is still "PENDING" or empty, generate unique placeholder
+              if (!uniqueReceiptId || uniqueReceiptId === 'PENDING') {
+                   uniqueReceiptId = `BATCH-${Date.now()}-${i}-${Math.floor(Math.random()*1000)}`;
+              }
+
+              payloads.push({
+                  staff_name: staffName,
+                  amount: amount,
+                  nab_code: uniqueReceiptId,
+                  full_email_content: contentToSave, // Save full email for context (even though duplicated per row, it preserves the audit trail)
+                  created_at: new Date().toISOString() // All same time
+              });
           }
+      } else {
+          // Single transaction logic (Standard Audit)
+          const staffNameMatch = contentToSave.match(/\*\*Staff Member:\*\*\s*(.*)/);
+          const amountMatch = contentToSave.match(/\*\*Amount:\*\*\s*(.*)/);
+          const receiptIdMatch = contentToSave.match(/\*\*Receipt ID:\*\*\s*(.*)/);
+          const nabMatch = contentToSave.match(/NAB (?:Code|Reference):(?:\*\*|)\s*(.*)/i);
+
+          const staffName = staffNameMatch ? staffNameMatch[1].trim() : 'Unknown';
+          const amount = amountMatch ? amountMatch[1].replace('(Based on Receipts/Form Audit)', '').trim() : '0.00';
+          
+          // Try to get specific NAB code first (from manual entry), fallback to Receipt ID
+          let uniqueReceiptId = nabMatch && nabMatch[1].trim() !== 'PENDING' ? nabMatch[1].trim() : (receiptIdMatch ? receiptIdMatch[1].trim() : null);
+
+          // Discrepancy handling
+          if (!uniqueReceiptId && (contentToSave.toLowerCase().includes('discrepancy') || contentToSave.toLowerCase().includes('mismatch') || contentToSave.includes('STATUS: PENDING'))) {
+              uniqueReceiptId = `DISC-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+          }
+
+          if (uniqueReceiptId) {
+             const { data: existingData } = await supabase.from('audit_logs').select('id').eq('nab_code', uniqueReceiptId).single();
+             if (existingData) {
+                  setSaveStatus('duplicate');
+                  setIsSaving(false);
+                  setErrorMessage(`Duplicate Receipt Detected! ID: ${uniqueReceiptId} already exists.`);
+                  return; 
+             }
+          }
+
+          payloads.push({
+              staff_name: staffName,
+              amount: amount,
+              nab_code: uniqueReceiptId, 
+              full_email_content: contentToSave, 
+              created_at: new Date().toISOString()
+          });
       }
 
-      const payload = {
-        staff_name: staffName,
-        amount: amount,
-        nab_code: uniqueReceiptId, 
-        full_email_content: contentToSave, 
-        created_at: new Date().toISOString()
-      };
-
-      const { error } = await supabase.from('audit_logs').insert([payload]);
+      // Execute Inserts
+      const { error } = await supabase.from('audit_logs').insert(payloads);
       if (error) throw error;
 
       setSaveStatus('success');
@@ -510,7 +626,7 @@ ${results.phase1}
     setEmailCopied(false);
     setSaveStatus('idle');
     setIsEditing(false);
-    setNabReference('');
+    // setNabReference('');
 
     try {
       const receiptImages = await Promise.all(receiptFiles.map(async (file) => ({
@@ -652,16 +768,17 @@ ${results.phase1}
 
   // Generate EOD Schedule (Sequential time from 7:00 AM)
   const generateEODSchedule = (records: any[]) => {
-     if (records.length === 0) return [];
-
      let currentTime = new Date();
-     currentTime.setHours(7, 0, 0, 0); // Start at 7:00 AM
+     currentTime.setHours(6, 59, 0, 0); // Start base at 6:59:00
      
      const scheduled = records.map(record => {
          const activity = record.isDiscrepancy ? 'Pending' : 'Reimbursement';
 
-         // LOGIC BASED ON EXCEL FORMULA:
-         // IF(curr="Reimbursement", TIME(0, RANDBETWEEN(10,15), 0), TIME(0, RANDBETWEEN(15,20), 0))
+         // Start Time = Prev End Time + 1 minute (Gap)
+         const startTime = new Date(currentTime);
+         startTime.setMinutes(startTime.getMinutes() + 1);
+
+         // Duration Logic
          let duration = 0;
          if (activity === 'Reimbursement') {
              duration = Math.floor(Math.random() * (15 - 10 + 1) + 10); // 10 to 15 mins
@@ -670,26 +787,22 @@ ${results.phase1}
              duration = Math.floor(Math.random() * (20 - 15 + 1) + 15); // 15 to 20 mins
          }
          
-         const startTime = new Date(currentTime);
-         const endTime = new Date(currentTime);
+         const endTime = new Date(startTime);
          endTime.setMinutes(endTime.getMinutes() + duration);
+         
+         // Update current time (which acts as prev_end for next loop)
+         currentTime = new Date(endTime);
          
          // Formatting HH:MM:SS
          const timeStartStr = startTime.toLocaleTimeString('en-GB', { hour12: false });
          const timeEndStr = endTime.toLocaleTimeString('en-GB', { hour12: false });
          
-         // Update current time for next row (End + 1 min gap per formula: prev_end + TIME(0, 1, 0))
-         currentTime = new Date(endTime);
-         currentTime.setMinutes(currentTime.getMinutes() + 1);
-         
-         // Status Logic
+         // Status Logic (Same as before)
          let status = '';
          if (record.isDiscrepancy) {
-             status = `🔴 ${record.discrepancyReason}`; // Show specific reason
+             status = `🔴 ${record.discrepancyReason}`; 
          } else {
-             // Check if amount is > 300 to add finding
              const numericAmount = parseFloat(record.amount.replace(/[^0-9.-]+/g,""));
-             
              if (numericAmount > 300) {
                  status = `⚠️ PAID (High Value) ${record.amount} ${record.staff_name} ${record.nabRef} | FINDING: Amount > $300`;
              } else {
@@ -706,38 +819,35 @@ ${results.phase1}
          };
      });
 
-     // Extract Payment Details for Dashboard Card (only if no discrepancy)
-     return scheduled;
-  };
+     // Append "IDLE" row at the end
+     // IDLE Start = Last Task End + 1 min
+     const idleStartTime = new Date(currentTime);
+     idleStartTime.setMinutes(idleStartTime.getMinutes() + 1);
+     
+     // IDLE End = 15:00:00 (3:00 PM)
+     const idleEndTime = new Date(currentTime);
+     idleEndTime.setHours(15, 0, 0, 0);
+     idleEndTime.setMinutes(0);
+     idleEndTime.setSeconds(0);
 
-  const getDashboardPaymentDetails = () => {
-      if (!results?.phase4) return null;
-      
-      const isDiscrepancy = results.phase4.toLowerCase().includes("discrepancy was found") || 
-                            results.phase4.toLowerCase().includes("mismatch");
-      
-      if (isDiscrepancy) return null;
+     // Safety: If work went past 3pm, IDLE duration is 0 or end matches start
+     if (idleStartTime > idleEndTime) {
+         idleEndTime.setTime(idleStartTime.getTime());
+     }
 
-      const staffNameMatch = results.phase4.match(/\*\*Staff Member:\*\*\s*(.*)/);
-      const amountMatch = results.phase4.match(/\*\*Amount:\*\*\s*(.*)/);
-      const receiptIdMatch = results.phase4.match(/\*\*Receipt ID:\*\*\s*(.*)/);
+     const idleRow = {
+         id: 'idle-row',
+         eodTimeStart: idleStartTime.toLocaleTimeString('en-GB', { hour12: false }),
+         eodTimeEnd: idleEndTime.toLocaleTimeString('en-GB', { hour12: false }),
+         eodActivity: 'IDLE',
+         clientName: '',
+         staff_name: '',
+         amount: '',
+         date: '',
+         eodStatus: ''
+     };
 
-      let rawName = staffNameMatch ? staffNameMatch[1].trim() : 'Unknown';
-      let formattedName = rawName;
-      
-      // Convert "LAST, FIRST" to "FIRST LAST"
-      if (rawName.includes(',')) {
-          const parts = rawName.split(',');
-          if (parts.length >= 2) {
-              formattedName = `${parts[1].trim()} ${parts[0].trim()}`;
-          }
-      }
-
-      return {
-          name: formattedName,
-          amount: amountMatch ? amountMatch[1].trim() : '0.00',
-          ref: receiptIdMatch ? receiptIdMatch[1].trim() : 'N/A'
-      };
+     return [...scheduled, idleRow];
   };
 
   // DATA PROCESSING LOGIC UPDATE
@@ -769,8 +879,6 @@ ${results.phase1}
   const nabReportData: any[] = todaysProcessedRecords.filter(r => !r.isDiscrepancy);
   const totalAmount = nabReportData.reduce((sum, r) => sum + parseFloat(r.amount.replace(/[^0-9.-]+/g,"")), 0);
   
-  const dashboardPaymentDetails = getDashboardPaymentDetails();
-
   // Helper to determine what text to show on Save Button
   const getSaveButtonText = () => {
       if (isSaving) return <><RefreshCw size={12} className="animate-spin" /> Saving...</>;
@@ -1083,23 +1191,23 @@ ${results.phase1}
                         </div>
                       </div>
 
-                      {/* Banking Details Card (Inline, No Discrepancy) */}
-                      {dashboardPaymentDetails && (
-                         <div className="mx-8 mt-6 bg-gradient-to-br from-indigo-900/40 to-purple-900/40 border border-indigo-500/30 rounded-2xl p-6 relative overflow-hidden group">
+                      {/* Banking Details Card (Dynamic Mapping for Multiple) */}
+                      {parsedTransactions.length > 0 && parsedTransactions.map((tx, idx) => (
+                        <div key={idx} className="mx-8 mt-6 bg-gradient-to-br from-indigo-900/40 to-purple-900/40 border border-indigo-500/30 rounded-2xl p-6 relative overflow-hidden group">
                             <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
                                <CreditCard size={80} className="text-white" />
                             </div>
                             <div className="relative z-10">
                                <h4 className="text-sm font-bold text-indigo-200 uppercase tracking-widest mb-4 flex items-center gap-2">
                                   <div className="w-2 h-2 rounded-full bg-indigo-400"></div>
-                                  Banking Details (Manual Transfer)
+                                  Banking Details {parsedTransactions.length > 1 ? `(${idx + 1}/${parsedTransactions.length})` : '(Manual Transfer)'}
                                </h4>
                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                   <div className="bg-black/30 rounded-xl p-3 border border-white/5 hover:border-white/10 transition-colors">
                                      <p className="text-[10px] uppercase text-slate-400 font-bold mb-1">Payee Name</p>
                                      <div className="flex justify-between items-center">
-                                        <p className="text-white font-semibold truncate uppercase">{dashboardPaymentDetails.name}</p>
-                                        <button onClick={() => handleCopyField(dashboardPaymentDetails.name, 'name')} className="text-indigo-400 hover:text-white transition-colors">
+                                        <p className="text-white font-semibold truncate uppercase">{tx.formattedName}</p>
+                                        <button onClick={() => handleCopyField(tx.formattedName, 'name')} className="text-indigo-400 hover:text-white transition-colors">
                                            {copiedField === 'name' ? <Check size={14} /> : <Copy size={14} />}
                                         </button>
                                      </div>
@@ -1107,26 +1215,39 @@ ${results.phase1}
                                   <div className="bg-black/30 rounded-xl p-3 border border-white/5 hover:border-emerald-500/30 transition-colors">
                                      <p className="text-[10px] uppercase text-slate-400 font-bold mb-1">Amount</p>
                                      <div className="flex justify-between items-center">
-                                        <p className="text-emerald-400 font-bold text-lg">{dashboardPaymentDetails.amount.replace(/[^0-9.]/g, '')}</p>
-                                        <button onClick={() => handleCopyField(dashboardPaymentDetails.amount.replace(/[^0-9.]/g, ''), 'amount')} className="text-emerald-500 hover:text-white transition-colors">
+                                        <p className="text-emerald-400 font-bold text-lg">{tx.amount.replace(/[^0-9.]/g, '')}</p>
+                                        <button onClick={() => handleCopyField(tx.amount.replace(/[^0-9.]/g, ''), 'amount')} className="text-emerald-500 hover:text-white transition-colors">
                                            {copiedField === 'amount' ? <Check size={14} /> : <Copy size={14} />}
                                         </button>
                                      </div>
                                   </div>
                                 </div>
                             </div>
-                         </div>
-                      )}
+                        </div>
+                      ))}
 
+                      {/* Step 5: Input Fields (Mapped) */}
                       <div className="px-8 pt-6 pb-2">
                           <label className="block text-xs uppercase tracking-widest font-bold text-slate-500 mb-2">
-                             Step 5: Enter Bank/NAB Reference
+                             Step 5: Enter Bank/NAB Reference(s)
                           </label>
-                          <div className="relative">
-                             <CreditCard className="absolute left-3 top-1/2 -translate-y-1/2 text-indigo-400" size={16} />
-                             <input type="text" value={nabReference} onChange={handleNabReferenceChange} placeholder="e.g. 562891 (From your banking app)" className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-white focus:outline-none focus:border-indigo-500 transition-colors" />
+                          <div className="space-y-3">
+                              {parsedTransactions.length === 0 ? (
+                                  <p className="text-sm text-slate-500 italic">No transactions detected or pending analysis...</p>
+                              ) : parsedTransactions.map((tx, idx) => (
+                                  <div key={idx} className="relative">
+                                      <CreditCard className="absolute left-3 top-1/2 -translate-y-1/2 text-indigo-400" size={16} />
+                                      <input 
+                                          type="text" 
+                                          value={tx.currentNabRef} 
+                                          onChange={(e) => handleTransactionNabChange(idx, e.target.value)} 
+                                          placeholder={`Reference for ${tx.formattedName} ($${tx.amount})...`} 
+                                          className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-white focus:outline-none focus:border-indigo-500 transition-colors placeholder:text-slate-600" 
+                                      />
+                                  </div>
+                              ))}
                           </div>
-                          <p className="text-[10px] text-slate-500 mt-2">Paying via bank transfer? Enter the reference code here to update the email automatically.</p>
+                          <p className="text-[10px] text-slate-500 mt-2">Paying via bank transfer? Enter the reference code(s) above to update the email automatically.</p>
                       </div>
                       <div className="p-8">
                         <div className="bg-white rounded-xl p-8 shadow-2xl text-slate-800 selection:bg-indigo-100 selection:text-indigo-900">
@@ -1144,7 +1265,7 @@ ${results.phase1}
             </div>
           )}
 
-          {/* NAB LOG VIEW (NEW) */}
+          {/* ... existing views ... */}
           {activeTab === 'nab_log' && (
              <div className="bg-[#1c1e24]/80 backdrop-blur-md rounded-[32px] border border-white/5 shadow-xl overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
                 {/* ... content of NAB log view ... */}
