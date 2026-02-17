@@ -687,14 +687,8 @@ ${results.phase1}
          if (record.isDiscrepancy) {
              status = `🔴 ${record.discrepancyReason}`; // Show specific reason
          } else {
-             // Check if amount is > 300 to add finding
-             const numericAmount = parseFloat(record.amount.replace(/[^0-9.-]+/g,""));
-             
-             if (numericAmount > 300) {
-                 status = `⚠️ PAID (High Value) ${record.amount} ${record.staff_name} ${record.nabRef} | FINDING: Amount > $300`;
-             } else {
-                 status = `🟩 PAID TO NAB ${record.amount} ${record.staff_name} ${record.nabRef}`;
-             }
+             // Treat all amounts same regardless of value (user request to remove High Value warning)
+             status = `🟩 PAID TO NAB ${record.amount} ${record.staff_name} ${record.nabRef}`;
          }
 
          return {

@@ -299,7 +299,9 @@ export const analyzeReimbursement = async (
   receiptImages: FileData[],
   formImage: FileData | null
 ) => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  // Use API_KEY if available, otherwise fallback to GOOGLE_API_KEY
+  // This ensures compatibility if the environment variables are named differently
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || process.env.GOOGLE_API_KEY });
   
   const parts = [];
 
