@@ -687,8 +687,14 @@ ${results.phase1}
          if (record.isDiscrepancy) {
              status = `🔴 ${record.discrepancyReason}`; // Show specific reason
          } else {
-             // Treat all amounts same regardless of value (user request to remove High Value warning)
-             status = `🟩 PAID TO NAB ${record.amount} ${record.staff_name} ${record.nabRef}`;
+             // Check if amount is > 300 to add finding
+             const numericAmount = parseFloat(record.amount.replace(/[^0-9.-]+/g,""));
+             
+             if (numericAmount > 300) {
+                 status = `⚠️ PAID (High Value) ${record.amount} ${record.staff_name} ${record.nabRef} | FINDING: Amount > $300`;
+             } else {
+                 status = `🟩 PAID TO NAB ${record.amount} ${record.staff_name} ${record.nabRef}`;
+             }
          }
 
          return {
@@ -1229,8 +1235,8 @@ ${results.phase1}
                         <table id="eod-report-table" style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'Arial, sans-serif', fontSize: '11px', backgroundColor: '#ffffff' }}>
                            <thead>
                               <tr style={{ backgroundColor: '#f3f4f6' }}>
-                                 <th style={{ border: '1px solid #d1d5db', padding: '6px', textAlign: 'left', fontWeight: 'bold', color: '#111827' }}>TIME START</th>
-                                 <th style={{ border: '1px solid #d1d5db', padding: '6px', textAlign: 'left', fontWeight: 'bold', color: '#111827' }}>TIME END</th>
+                                 <th style={{ border: '1px solid #d1d5db', padding: '6px', textAlign: 'left', fontWeight: 'bold', color: '#111827' }}>TIME IN</th>
+                                 <th style={{ border: '1px solid #d1d5db', padding: '6px', textAlign: 'left', fontWeight: 'bold', color: '#111827' }}>TIME OUT</th>
                                  <th style={{ border: '1px solid #d1d5db', padding: '6px', textAlign: 'left', fontWeight: 'bold', color: '#111827' }}>ACTIVITY</th>
                                  <th style={{ border: '1px solid #d1d5db', padding: '6px', textAlign: 'left', fontWeight: 'bold', color: '#111827' }}>NAME OF YP</th>
                                  <th style={{ border: '1px solid #d1d5db', padding: '6px', textAlign: 'left', fontWeight: 'bold', color: '#111827' }}>NAME OF EMPLOYEE</th>
