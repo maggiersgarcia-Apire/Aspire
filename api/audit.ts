@@ -228,8 +228,9 @@ export default async function handler(req: any, res: any) {
 
     const ai = new GoogleGenAI({ apiKey });
     
+    // Changed model to gemini-1.5-flash-001 for stability
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: "gemini-1.5-flash-001", 
       config: {
         systemInstruction: ASPIRE_SYSTEM_INSTRUCTION,
         temperature: 0.1,
