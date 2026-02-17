@@ -82,16 +82,27 @@ Block 2: [Numeric Total, e.g., 48.95]
 ## PHASE 3: THE AUDIT (CRITICAL RULES)
 RULE 1: The Integrity Check (Form vs. Receipt)
 Compare [Total Amount from Phase 2] (Form) vs. [Total Amount from Phase 1] (Receipt).
-* **Ruling:** If the Reimbursement Form Amount is **HIGHER** (or different) than the Receipt Amount, **DO NOT STOP**. Just **PROCEED** to Rule 2.
-* **Action:** Adopt the **Receipt Amount** (from Phase 1) as the final correct amount for the email and proceed.
-* **Exceptions:** Only trigger a "Discrepancy" (Email Type A) if the receipts are completely missing, illegible, or significantly unrelated. For amount mismatches, prefer to proceed using the Receipt Amount.
+
+* **SCENARIO A: Receipt Amount > Form Amount (Receipt is "Sobra")**
+    *   **Observation:** The receipt total is higher than the requested amount on the form (e.g., personal items included).
+    *   **Action:** **ALWAYS FOLLOW THE REIMBURSEMENT FORM AMOUNT.**
+    *   **Instruction:** "Edit" the total. Use the **Form Amount** as the final "Total Amount" in the email and summary. Use the Form Amount as the payout amount.
+
+* **SCENARIO B: Form Amount > Receipt Amount**
+    *   **Observation:** The Form requests more than the receipt proves.
+    *   **Action:** Adopt the **Receipt Amount**. We cannot reimburse more than the proof provided.
+
+* **SCENARIO C: Amounts Match**
+    *   **Action:** Proceed with the matched amount.
+
+* **Exceptions:** Only trigger a "Discrepancy" (Email Type A) if the receipts are completely missing, illegible, or significantly unrelated. For amount mismatches, follow Scenario A or B and proceed.
 
 RULE 2: Duplicate Check
 Check if this receipt details (Store, Date, Amount) have been processed before in this session.
 IF DUPLICATE: Flag immediately.
 
 RULE 3: The "Julian Rule" (>$300)
-Is the Total Amount > $300?
+Is the Total Amount (Determined in Rule 1) > $300?
 IF YES: Trigger Email Type C (Julian Approval).
 
 RULE 4: The 30-Day Rule
@@ -99,7 +110,7 @@ Is the Receipt Date > 30 days old?
 IF YES: Trigger Email Type C (Julian Approval - Late).
 
 RULE 5: All Good
-If Matches Exactly OR if Form Amount > Receipt Amount (Proceeded via Rule 1) + <$300 + <30 Days + No Issues.
+If Matches Exactly OR if Resolved via Rule 1 + <$300 + <30 Days + No Issues.
 Action: Trigger Email Type B (Success).
 
 ---
@@ -127,7 +138,7 @@ I am writing to inform you that a discrepancy was found during the audit of your
 
 **Staff Member:** [Last Name, First Name]
 **Client / Location:** [Client Name/Location]
-**Amount:** $[Receipt Amount]
+**Amount:** $[Amount Determined in Rule 1]
 
 [Explain the specific critical issue, e.g., missing receipt, illegible date, etc.]
 
@@ -157,13 +168,13 @@ I am writing to confirm that your reimbursement request has been successfully pr
 **Staff Member:** [Last Name, First Name]
 **Client / Location:** [Client Name/Location]
 **Approved By:** [Approver Name]
-**Amount:** $[Total Amount] (Based on Receipts)
+**Amount:** $[Amount Determined in Rule 1]
 **Receipt ID:** [Receipt ID found in Phase 1]
 **NAB Reference:** PENDING
 
 [INSERT DETAILED TABLE HERE]
 
-**TOTAL AMOUNT: $[Total Amount]**
+**TOTAL AMOUNT: $[Amount Determined in Rule 1]**
 
 [INSERT SUMMARY TABLE HERE]
 

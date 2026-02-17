@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   RefreshCw, AlertCircle, Send, LayoutDashboard, CheckCircle, 
   UserCheck, Edit2, X, Check, CloudUpload, Copy, CreditCard, 
-  ClipboardList, Trash2, Database, Search, Download, User, Users, Save
+  ClipboardList, Trash2, Database, Search, Download, User, Users, Save, HelpCircle
 } from 'lucide-react';
 import { supabase } from './services/supabaseClient';
 import { analyzeReimbursement } from './services/geminiService';
@@ -58,7 +58,7 @@ const findBestEmployeeMatch = (scannedName: string, employees: Employee[]): Empl
     return null;
 };
 
-const App: React.FC = () => {
+export const App = () => {
   const [receiptFiles, setReceiptFiles] = useState<FileWithPreview[]>([]);
   const [formFiles, setFormFiles] = useState<FileWithPreview[]>([]);
   const [processingState, setProcessingState] = useState<ProcessingState>(ProcessingState.IDLE);
@@ -71,6 +71,7 @@ const App: React.FC = () => {
   
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error' | 'duplicate'>('idle');
   const [isSaving, setIsSaving] = useState(false);
+  const [showSaveModal, setShowSaveModal] = useState(false);
   
   const [emailCopied, setEmailCopied] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -147,7 +148,56 @@ const App: React.FC = () => {
   };
 
   const handleJulianApproval = () => {
-      alert("Julian Approval Triggered (Simulation)");
+      if (!results) return;
+
+      const currentContent = results.phase4;
+      
+      // Extract data from current content or phase 1
+      const getField = (regex: RegExp) => {
+          const match = currentContent.match(regex);
+          return match ? match[1].trim() : null;
+      };
+
+      const staffName = getField(/\*\*Staff Member:\*\*\s*(.*)/) || getField(/Staff Member:\s*(.*)/) || "Unknown";
+      let amount = getField(/\*\*Amount:\*\*\s*(.*)/) || getField(/Amount:\s*(.*)/) || "0.00";
+      // Sanitize Amount
+      amount = amount.replace('(Based on Receipts/Form Audit)', '').trim();
+
+      const client = getField(/\*\*Client \/ Location:\*\*\s*(.*)/) || getField(/Client \/ Location:\s*(.*)/) || "N/A";
+      
+      // Attempt to find Receipt ID in Phase 1 if not in Phase 4
+      let receiptId = getField(/\*\*Receipt ID:\*\*\s*(.*)/);
+      if (!receiptId && results.phase1) {
+          const phase1Id = results.phase1.match(/\*\*Receipt ID:\*\* (.*)/) || results.phase1.match(/Receipt ID: (.*)/);
+          receiptId = phase1Id ? phase1Id[1].trim() : "generated-ref";
+      }
+
+      const approvedContent = `Hi,
+
+I hope this message finds you well.
+
+I am writing to confirm that your reimbursement request has been successfully processed today.
+
+**Staff Member:** ${staffName}
+**Client / Location:** ${client}
+**Approved By:** Julian
+**Amount:** ${amount}
+**Receipt ID:** ${receiptId || 'PENDING'}
+**NAB Reference:** PENDING
+
+Here is the full breakdown of the items analyzed from your receipts:
+
+${results.phase1}
+
+**TOTAL AMOUNT: ${amount}**
+`;
+
+      setResults({
+          ...results,
+          phase4: approvedContent,
+          // Modifying phase3 to remove the trigger condition so the button disappears after approval
+          phase3: results.phase3.replace("Email Type C", "Email Type B (Julian Approved)")
+      });
   };
 
   const fetchHistory = async () => {
@@ -178,7 +228,9 @@ const App: React.FC = () => {
           // Extract basic info
           const staffName = record.staff_name || 'Unknown';
           const amountMatch = content.match(/\*\*Amount:\*\*\s*(.*)/);
-          const totalAmount = record.amount || (amountMatch ? amountMatch[1].trim() : '0.00');
+          let totalAmount = record.amount || (amountMatch ? amountMatch[1].trim() : '0.00');
+          // Sanitize Total Amount
+          totalAmount = totalAmount.replace('(Based on Receipts/Form Audit)', '').trim();
           
           const ypMatch = content.match(/\*\*Client \/ Location:\*\*\s*(.*)/);
           const ypName = ypMatch ? ypMatch[1].trim() : 'N/A';
@@ -375,8 +427,8 @@ const App: React.FC = () => {
       }
   };
 
-  const handleSaveToCloud = async () => {
-    const contentToSave = isEditing ? editableContent : results?.phase4;
+  const handleSaveToCloud = async (contentOverride?: string) => {
+    const contentToSave = contentOverride || (isEditing ? editableContent : results?.phase4);
     if (!contentToSave) return;
     
     setIsSaving(true);
@@ -386,12 +438,20 @@ const App: React.FC = () => {
       const staffNameMatch = contentToSave.match(/\*\*Staff Member:\*\*\s*(.*)/);
       const amountMatch = contentToSave.match(/\*\*Amount:\*\*\s*(.*)/);
       const receiptIdMatch = contentToSave.match(/\*\*Receipt ID:\*\*\s*(.*)/);
-      const nabRefMatch = contentToSave.match(/\*\*NAB Reference:\*\*\s*(.*)/);
+      // const nabRefMatch = contentToSave.match(/\*\*NAB Reference:\*\*\s*(.*)/);
 
       const staffName = staffNameMatch ? staffNameMatch[1].trim() : 'Unknown';
-      const amount = amountMatch ? amountMatch[1].trim() : '0.00';
-      const uniqueReceiptId = receiptIdMatch ? receiptIdMatch[1].trim() : null;
+      // Sanitize Amount
+      const amount = amountMatch ? amountMatch[1].replace('(Based on Receipts/Form Audit)', '').trim() : '0.00';
       
+      let uniqueReceiptId = receiptIdMatch ? receiptIdMatch[1].trim() : null;
+      
+      // Fallback for Discrepancies which don't have Receipt ID in the email body
+      // We generate a unique ID so it can be saved to Supabase (assuming nab_code might be a PK or unique)
+      if (!uniqueReceiptId && (contentToSave.toLowerCase().includes('discrepancy') || contentToSave.toLowerCase().includes('mismatch') || contentToSave.includes('STATUS: PENDING'))) {
+          uniqueReceiptId = `DISC-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+      }
+
       if (uniqueReceiptId) {
           const { data: existingData } = await supabase
               .from('audit_logs')
@@ -426,6 +486,16 @@ const App: React.FC = () => {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const confirmSave = (status: 'PENDING' | 'PAID') => {
+      const tag = status === 'PENDING' ? '\n\n<!-- STATUS: PENDING -->' : '\n\n<!-- STATUS: PAID -->';
+      const baseContent = isEditing ? editableContent : results?.phase4 || '';
+      // Only append if not already there to avoid duplicates if re-saving
+      const finalContent = baseContent.includes('<!-- STATUS:') ? baseContent : baseContent + tag;
+      
+      handleSaveToCloud(finalContent);
+      setShowSaveModal(false);
   };
 
   const handleProcess = async () => {
@@ -533,10 +603,18 @@ const App: React.FC = () => {
           const nabRefMatch = content.match(/\*\*NAB Reference:?\*\*?\s*(.*?)(?:\n|$)/i);
           const clientMatch = content.match(/\*\*Client \/ Location:\*\*\s*(.*?)(?:\n|$)/i);
 
-          // Identify Status based on content content
-          const isDiscrepancy = content.toLowerCase().includes("discrepancy was found") || 
-                                content.toLowerCase().includes("mismatch") ||
-                                !content.toLowerCase().includes("successfully processed");
+          // Identify Status based on content content OR manual tags
+          let isDiscrepancy = false;
+          if (content.includes("<!-- STATUS: PENDING -->")) {
+              isDiscrepancy = true;
+          } else if (content.includes("<!-- STATUS: PAID -->")) {
+              isDiscrepancy = false;
+          } else {
+              // Fallback to AI text analysis
+              isDiscrepancy = content.toLowerCase().includes("discrepancy was found") || 
+                              content.toLowerCase().includes("mismatch") ||
+                              !content.toLowerCase().includes("successfully processed");
+          }
           
           const clientName = clientMatch ? clientMatch[1].trim() : 'N/A';
           const nabRef = nabRefMatch ? nabRefMatch[1].trim() : (isDiscrepancy ? 'N/A' : 'PENDING');
@@ -549,7 +627,7 @@ const App: React.FC = () => {
               if (formAmountMatch && receiptAmountMatch) {
                   discrepancyReason = `Mismatch: Form $${formAmountMatch[1]} / Rcpt $${receiptAmountMatch[1]}`;
               } else {
-                  discrepancyReason = 'Discrepancy detected (Check email)';
+                  discrepancyReason = 'Discrepancy / Pending';
               }
           }
 
@@ -561,6 +639,11 @@ const App: React.FC = () => {
               discrepancyReason: discrepancyReason,
               time: new Date(r.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
               date: new Date(r.created_at).toLocaleDateString(),
+              created_at: r.created_at, // Ensure created_at is passed through
+              id: r.id, // Ensure ID is passed through
+              staff_name: r.staff_name || 'Unknown',
+              // Sanitize amount immediately upon processing for all views
+              amount: (r.amount || '0.00').replace('(Based on Receipts/Form Audit)', '').trim(),
               // Helper for Today check
               isToday: new Date(r.created_at).toDateString() === new Date().toDateString()
           };
@@ -623,31 +706,10 @@ const App: React.FC = () => {
          };
      });
 
-     // Add IDLE row if end time is before 15:00
-     const shiftEnd = new Date();
-     shiftEnd.setHours(15, 0, 0, 0);
-     
-     // Sync dates to compare times correctly
-     currentTime.setFullYear(shiftEnd.getFullYear(), shiftEnd.getMonth(), shiftEnd.getDate());
-
-     if (currentTime < shiftEnd) {
-         scheduled.push({
-             isIdle: true,
-             eodTimeStart: currentTime.toLocaleTimeString('en-GB', { hour12: false }),
-             eodTimeEnd: '15:00:00',
-             eodActivity: 'IDLE',
-             clientName: '',
-             staff_name: '',
-             amount: '',
-             date: '',
-             eodStatus: ''
-         });
-     }
-
+     // Extract Payment Details for Dashboard Card (only if no discrepancy)
      return scheduled;
   };
 
-  // Extract Payment Details for Dashboard Card (only if no discrepancy)
   const getDashboardPaymentDetails = () => {
       if (!results?.phase4) return null;
       
@@ -679,10 +741,10 @@ const App: React.FC = () => {
   };
 
   // DATA PROCESSING LOGIC UPDATE
-  const allProcessedRecords = useMemo(() => processRecords(historyData), [historyData]);
+  const allProcessedRecords = useMemo<any[]>(() => processRecords(historyData), [historyData]);
 
   // Today's records for EOD Schedule & NAB Log
-  const todaysProcessedRecords = useMemo(() => {
+  const todaysProcessedRecords = useMemo<any[]>(() => {
       return allProcessedRecords
         .filter(r => r.isToday)
         .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
@@ -704,10 +766,24 @@ const App: React.FC = () => {
   const pendingCountToday = todaysProcessedRecords.filter(r => r.isDiscrepancy).length;
 
   // NAB Log (Today)
-  const nabReportData = todaysProcessedRecords.filter(r => !r.isDiscrepancy);
+  const nabReportData: any[] = todaysProcessedRecords.filter(r => !r.isDiscrepancy);
   const totalAmount = nabReportData.reduce((sum, r) => sum + parseFloat(r.amount.replace(/[^0-9.-]+/g,"")), 0);
   
   const dashboardPaymentDetails = getDashboardPaymentDetails();
+
+  // Helper to determine what text to show on Save Button
+  const getSaveButtonText = () => {
+      if (isSaving) return <><RefreshCw size={12} className="animate-spin" /> Saving...</>;
+      if (saveStatus === 'success') return <><RefreshCw size={12} strokeWidth={2.5} /> Start New Audit</>;
+      if (saveStatus === 'error') return <><CloudUpload size={12} strokeWidth={2.5} /> Retry Save</>;
+      if (saveStatus === 'duplicate') return <><CloudUpload size={12} strokeWidth={2.5} /> Duplicate!</>;
+      
+      // Dynamic Label based on Result Type
+      if (results?.phase4.toLowerCase().includes('discrepancy')) {
+          return <><CloudUpload size={12} strokeWidth={2.5} /> Save Record</>;
+      }
+      return <><CloudUpload size={12} strokeWidth={2.5} /> Save & Pay</>;
+  };
 
   // Splash Screen Render
   if (loadingSplash) {
@@ -728,6 +804,47 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-[#0f1115] text-slate-300 font-sans">
       {/* BACKGROUND WATERMARKS REMOVED AS REQUESTED */}
+
+      {/* SAVE CONFIRMATION MODAL */}
+      {showSaveModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+              <div className="bg-[#1c1e24] border border-white/10 rounded-3xl p-8 max-w-md w-full shadow-2xl scale-100 animate-in zoom-in-95 duration-200">
+                  <div className="flex flex-col items-center text-center space-y-6">
+                      <div className="w-16 h-16 rounded-full bg-indigo-500/20 flex items-center justify-center text-indigo-400">
+                          <HelpCircle size={32} />
+                      </div>
+                      <div className="space-y-2">
+                          <h3 className="text-xl font-bold text-white">Confirm Transaction Status</h3>
+                          <p className="text-slate-400 text-sm">Is this transaction PENDING (Discrepancy) or ready to be PAID?</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4 w-full">
+                          <button 
+                              onClick={() => confirmSave('PENDING')}
+                              className="flex flex-col items-center justify-center gap-2 p-4 rounded-2xl bg-red-500/10 border border-red-500/20 hover:bg-red-500/20 transition-all group"
+                          >
+                              <AlertCircle className="text-red-400 group-hover:scale-110 transition-transform" />
+                              <span className="text-sm font-bold text-red-400">PENDING</span>
+                              <span className="text-[10px] text-red-300 opacity-60">Discrepancy Found</span>
+                          </button>
+                          <button 
+                              onClick={() => confirmSave('PAID')}
+                              className="flex flex-col items-center justify-center gap-2 p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/20 transition-all group"
+                          >
+                              <CheckCircle className="text-emerald-400 group-hover:scale-110 transition-transform" />
+                              <span className="text-sm font-bold text-emerald-400">PAID / PROCESSED</span>
+                              <span className="text-[10px] text-emerald-300 opacity-60">Reimbursement Success</span>
+                          </button>
+                      </div>
+                      <button 
+                          onClick={() => setShowSaveModal(false)}
+                          className="text-slate-500 hover:text-white text-sm font-medium transition-colors"
+                      >
+                          Cancel
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
 
       <div className="relative z-10 p-6 max-w-[1600px] mx-auto">
         <header className="flex items-center justify-between mb-8 bg-white/5 backdrop-blur-xl border border-white/10 rounded-full px-6 py-3 shadow-2xl">
@@ -954,17 +1071,11 @@ const App: React.FC = () => {
                                 </>
                             )}
                             <button 
-                                onClick={saveStatus === 'success' ? resetAll : handleSaveToCloud} 
+                                onClick={() => setShowSaveModal(true)} 
                                 disabled={isSaving || isEditing} 
                                 className={`flex items-center gap-2 text-[10px] px-3 py-1.5 rounded-full uppercase tracking-wider font-bold shadow-lg transition-all duration-200 ${saveStatus === 'success' ? 'bg-emerald-500 text-white shadow-emerald-500/20 hover:bg-emerald-600' : saveStatus === 'error' || saveStatus === 'duplicate' ? 'bg-red-500 text-white shadow-red-500/20' : isEditing ? 'bg-slate-700/50 text-slate-500 cursor-not-allowed' : 'bg-slate-700 text-white hover:bg-slate-600 shadow-slate-900/20'}`}
                             >
-                              {isSaving ? (
-                                  <><RefreshCw size={12} className="animate-spin" /> Saving...</>
-                              ) : saveStatus === 'success' ? (
-                                  <><RefreshCw size={12} strokeWidth={2.5} /> Start New Audit</>
-                              ) : (
-                                  <><CloudUpload size={12} strokeWidth={2.5} /> {saveStatus === 'error' ? 'Retry Save' : saveStatus === 'duplicate' ? 'Duplicate!' : 'Save & Pay'}</>
-                              )}
+                                {getSaveButtonText()}
                             </button>
                             <button onClick={handleCopyEmail} disabled={isEditing} className={`flex items-center gap-2 text-[10px] px-3 py-1.5 rounded-full uppercase tracking-wider font-bold shadow-lg transition-all duration-200 ${emailCopied ? 'bg-emerald-500 text-white shadow-emerald-500/20 hover:bg-emerald-600' : isEditing ? 'bg-indigo-500/50 text-white/50 cursor-not-allowed' : 'bg-indigo-500 text-white shadow-indigo-500/20 hover:bg-indigo-600 hover:scale-105 active:scale-95'}`}>
                               {emailCopied ? (<><Check size={12} strokeWidth={3} /> Copied!</>) : (<><Copy size={12} strokeWidth={3} /> Copy for Outlook</>)}
@@ -1036,6 +1147,7 @@ const App: React.FC = () => {
           {/* NAB LOG VIEW (NEW) */}
           {activeTab === 'nab_log' && (
              <div className="bg-[#1c1e24]/80 backdrop-blur-md rounded-[32px] border border-white/5 shadow-xl overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
+                {/* ... content of NAB log view ... */}
                 <div className="px-8 py-6 border-b border-white/5 flex items-center justify-between">
                    <div className="flex items-center gap-3">
                       <CreditCard className="text-emerald-400" />
@@ -1091,9 +1203,10 @@ const App: React.FC = () => {
              </div>
           )}
 
-          {/* EOD REPORT VIEW (NEW) */}
+          {/* ... existing views ... */}
           {activeTab === 'eod' && (
              <div className="bg-[#1c1e24]/80 backdrop-blur-md rounded-[32px] border border-white/5 shadow-xl overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
+                {/* ... content of EOD view ... */}
                 <div className="px-8 py-6 border-b border-white/5 flex items-center justify-between">
                    <div className="flex items-center gap-3">
                       <ClipboardList className="text-indigo-400" />
@@ -1214,9 +1327,10 @@ const App: React.FC = () => {
              </div>
           )}
 
-          {/* DATABASE VIEW (Standard) */}
+          {/* ... existing database view ... */}
           {activeTab === 'database' && (
              <div className="bg-[#1c1e24]/80 backdrop-blur-md rounded-[32px] border border-white/5 shadow-xl overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
+                {/* ... content of database view ... */}
                 <div className="px-8 py-6 border-b border-white/5 flex items-center justify-between">
                    <div className="flex items-center gap-3">
                       <Database className="text-emerald-400" />
@@ -1292,7 +1406,7 @@ const App: React.FC = () => {
              </div>
           )}
 
-          {/* SETTINGS VIEW */}
+          {/* ... existing settings view ... */}
           {activeTab === 'settings' && (
              <div className="max-w-6xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-12">
                 
@@ -1370,5 +1484,3 @@ const App: React.FC = () => {
     </div>
   );
 };
-
-export default App;
