@@ -1,30 +1,65 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Upload, X, FileText, FileSpreadsheet, CheckCircle, Circle, Loader2, 
   HelpCircle, AlertCircle, RefreshCw, Send, LayoutDashboard, Edit2, Check, 
   Copy, CreditCard, ClipboardList, Calendar, BarChart3, PieChart, TrendingUp, 
-  Users, Database, Search, Download, Save 
+  Users, Database, Search, Download, Save, CloudUpload 
 } from 'lucide-react';
 import FileUpload from './components/FileUpload';
 import ProcessingStep from './components/ProcessingStep';
 import MarkdownRenderer from './components/MarkdownRenderer';
 import Logo from './components/Logo';
 import { analyzeReimbursement } from './services/geminiService';
+import { fileToBase64 } from './utils/fileHelpers';
 import { FileWithPreview, ProcessingResult, ProcessingState } from './types';
 import { supabase } from './services/supabaseClient';
 
-const DEFAULT_EMPLOYEE_DATA = `John Doe\tManager\nJane Smith\tAssociate`;
+// Default Data for Employee List
+const DEFAULT_EMPLOYEE_DATA = `First Names	Surname	Concatenate	BSB	Account
+John	Smith	Smith, John	000000	00000000
+Jane	Doe	Doe, Jane	000000	00000000`;
 
-// Helper to parse employee data
-const parseEmployeeData = (text: string) => {
-    return text.split('\n').map(line => {
-        const parts = line.split('\t');
-        return { name: parts[0], role: parts[1] || 'Staff' };
-    }).filter(e => e.name.trim() !== '');
+interface Employee {
+  firstName: string;
+  surname: string;
+  fullName: string;
+  bsb: string;
+  account: string;
+}
+
+const parseEmployeeData = (rawData: string): Employee[] => {
+    return rawData.split('\n')
+        .slice(1) // Skip header
+        .filter(line => line.trim().length > 0)
+        .map(line => {
+            const cols = line.split('\t');
+            if (cols.length < 3) return null; // Relaxed check
+            return {
+                firstName: cols[0]?.trim() || '',
+                surname: cols[1]?.trim() || '',
+                fullName: cols[2]?.trim() || `${cols[1] || ''}, ${cols[0] || ''}`, 
+                bsb: cols[3]?.trim() || '',
+                account: cols[4]?.trim() || ''
+            };
+        })
+        .filter(item => item !== null) as Employee[];
+};
+
+const findBestEmployeeMatch = (scannedName: string, employees: Employee[]): Employee | null => {
+    if (!scannedName) return null;
+    const normalizedInput = scannedName.toLowerCase().replace(/[^a-z ]/g, '');
+    let bestMatch: Employee | null = null;
+
+    for (const emp of employees) {
+        const full = emp.fullName.toLowerCase();
+        if (normalizedInput.includes(full) || full.includes(normalizedInput)) {
+            return emp;
+        }
+    }
+    return null;
 };
 
 export const App = () => {
-  // State
   const [receiptFiles, setReceiptFiles] = useState<FileWithPreview[]>([]);
   const [formFiles, setFormFiles] = useState<FileWithPreview[]>([]);
   const [processingState, setProcessingState] = useState<ProcessingState>(ProcessingState.IDLE);
@@ -43,7 +78,8 @@ export const App = () => {
   const [reportCopied, setReportCopied] = useState<'nab' | 'eod' | 'analytics' | 'weekly' | 'monthly' | 'quarterly' | 'yearly' | 'generated' | null>(null);
 
   const [activeTab, setActiveTab] = useState<'dashboard' | 'database' | 'nab_log' | 'eod' | 'analytics' | 'settings'>('dashboard');
-  
+  const [loadingSplash, setLoadingSplash] = useState(true);
+
   // Analytics Report State
   const [generatedReport, setGeneratedReport] = useState<string | null>(null);
   const [isEditingReport, setIsEditingReport] = useState(false);
@@ -52,288 +88,302 @@ export const App = () => {
   // Database / History State
   const [historyData, setHistoryData] = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [dismissedIds, setDismissedIds] = useState<number[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Settings
+  // Employee Database State
+  const [employeeList, setEmployeeList] = useState<Employee[]>([]);
   const [employeeRawText, setEmployeeRawText] = useState(DEFAULT_EMPLOYEE_DATA);
-  const [employeeList, setEmployeeList] = useState(parseEmployeeData(DEFAULT_EMPLOYEE_DATA));
   const [saveEmployeeStatus, setSaveEmployeeStatus] = useState<'idle' | 'saved'>('idle');
-  const [dismissedIds, setDismissedIds] = useState<string[]>([]);
 
-  // Computed / Parsed Data from Results
-  const [parsedTransactions, setParsedTransactions] = useState<any[]>([]);
-
-  // Mock Data for Dashboard/Analytics (since we don't have real DB connectivity setup in this context fully)
-  // In a real app, these would come from `historyData`
-  const databaseRows = historyData.map(item => ({
-      id: item.id,
-      ypName: item.client_location || 'Unknown',
-      staffName: item.staff_name || 'Unknown',
-      expenseType: item.category || 'General',
-      product: item.description || 'N/A',
-      receiptDate: item.date_incurred || 'N/A',
-      amount: `$${item.amount?.toFixed(2) || '0.00'}`,
-      totalAmount: `$${item.amount?.toFixed(2) || '0.00'}`,
-      dateProcessed: new Date(item.created_at).toLocaleDateString(),
-      nabCode: item.nab_reference || '-',
-      rawDate: new Date(item.created_at)
-  }));
-
-  const filteredDatabaseRows = databaseRows.filter(row => 
-    row.staffName.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    row.ypName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    row.amount.includes(searchTerm)
-  );
-
-  const analyticsData = {
-      totalSpend: historyData.reduce((acc, curr) => acc + (curr.amount || 0), 0),
-      totalRequests: historyData.length,
-      yp: Object.entries(historyData.reduce((acc: any, curr) => {
-          const loc = curr.client_location || 'Unknown';
-          acc[loc] = (acc[loc] || 0) + (curr.amount || 0);
-          return acc;
-      }, {})).sort((a: any, b: any) => b[1] - a[1]),
-      staff: Object.entries(historyData.reduce((acc: any, curr) => {
-          const staff = curr.staff_name || 'Unknown';
-          acc[staff] = (acc[staff] || 0) + (curr.amount || 0);
-          return acc;
-      }, {})).sort((a: any, b: any) => b[1] - a[1])
-  } as any;
-
-  // Today's specific data
-  const todaysProcessedRecords = historyData.filter(d => new Date(d.created_at).toDateString() === new Date().toDateString());
-  const nabReportData = todaysProcessedRecords.map(d => ({
-      date: new Date(d.created_at).toLocaleDateString(),
-      staff_name: d.staff_name,
-      nabRef: d.nab_reference || 'PENDING',
-      amount: `$${d.amount?.toFixed(2)}`
-  }));
-  const totalAmount = todaysProcessedRecords.reduce((acc, curr) => acc + (curr.amount || 0), 0);
-
-  const eodData = todaysProcessedRecords.map(d => ({
-      eodTimeStart: new Date(d.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
-      eodTimeEnd: new Date(new Date(d.created_at).getTime() + 10*60000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
-      eodActivity: 'Reimbursement Processing',
-      staff_name: d.staff_name,
-      amount: `$${d.amount?.toFixed(2)}`,
-      eodStatus: 'Completed'
-  }));
-
-  const reimbursementCount = todaysProcessedRecords.length;
-  const pendingCountToday = 0; // Mock
-
-  // Effects
   useEffect(() => {
+    // Splash screen timer
+    const timer = setTimeout(() => setLoadingSplash(false), 2000);
+    
+    // Load dismissed IDs
+    const storedDismissed = localStorage.getItem('aspire_dismissed_discrepancies');
+    if (storedDismissed) {
+        setDismissedIds(JSON.parse(storedDismissed));
+    }
+
+    // Load Employee Data
+    const storedEmployees = localStorage.getItem('aspire_employee_list');
+    if (storedEmployees) {
+        setEmployeeRawText(storedEmployees);
+        setEmployeeList(parseEmployeeData(storedEmployees));
+    } else {
+        setEmployeeList(parseEmployeeData(DEFAULT_EMPLOYEE_DATA));
+    }
+
+    // Initial fetch
     fetchHistory();
+
+    return () => clearTimeout(timer);
   }, []);
 
-  // Handlers
-  const fetchHistory = async () => {
-    setLoadingHistory(true);
-    // Simulate API delay or fetch from Supabase if configured
-    try {
-        const { data, error } = await supabase.from('reimbursements').select('*').order('created_at', { ascending: false });
-        if (data) {
-            setHistoryData(data);
-        } else {
-            // Mock data if Supabase is empty/fails
-            // setHistoryData([]); 
-        }
-    } catch (e) {
-        console.error("Fetch error", e);
-    } finally {
-        setLoadingHistory(false);
-    }
-  };
-
-  const resetAll = () => {
-    setReceiptFiles([]);
-    setFormFiles([]);
-    setResults(null);
-    setProcessingState(ProcessingState.IDLE);
-    setParsedTransactions([]);
-    setEditableContent('');
-    setSaveStatus('idle');
-  };
-
-  const handleProcess = async () => {
-    if (receiptFiles.length === 0) {
-        setErrorMessage("Please upload at least one receipt.");
-        return;
-    }
-    setErrorMessage(null);
-    setProcessingState(ProcessingState.PROCESSING);
-    
-    try {
-        const analysisText = await analyzeReimbursement(
-            await Promise.all(receiptFiles.map(async f => ({
-                mimeType: f.type,
-                data: (await import('./utils/fileHelpers')).fileToBase64(f) as unknown as string, // Need to implement/fix this helper or inline it. The existing fileHelpers.ts returns Promise<string> but has `fileToBase64` export.
-                name: f.name
-            }))),
-            formFiles.length > 0 ? {
-                mimeType: formFiles[0].type,
-                data: (await import('./utils/fileHelpers')).fileToBase64(formFiles[0]) as unknown as string,
-                name: formFiles[0].name
-            } : null
-        );
-
-        // Simple parsing of sections based on markers in system prompt
-        const phase1 = analysisText.split('<<<PHASE_1_START>>>')[1]?.split('<<<PHASE_1_END>>>')[0] || '';
-        const phase2 = analysisText.split('<<<PHASE_2_START>>>')[1]?.split('<<<PHASE_2_END>>>')[0] || '';
-        const phase3 = analysisText.split('<<<PHASE_3_START>>>')[1]?.split('<<<PHASE_3_END>>>')[0] || '';
-        const phase4 = analysisText.split('<<<PHASE_4_START>>>')[1]?.split('<<<PHASE_4_END>>>')[0] || '';
-
-        setResults({ phase1, phase2, phase3, phase4 });
-        setEditableContent(phase4.trim());
-        
-        // Extract amount for parsed transactions (very basic regex logic for demo)
-        const amountMatch = phase4.match(/\$([0-9,]+\.[0-9]{2})/);
-        const nameMatch = phase4.match(/Staff Member:\*\*\s*(.*)/i);
-        
-        if (amountMatch) {
-            setParsedTransactions([{
-                formattedName: nameMatch ? nameMatch[1].trim() : 'Unknown Staff',
-                amount: amountMatch[0],
-                currentNabRef: ''
-            }]);
-        } else {
-             setParsedTransactions([]);
-        }
-
-        setProcessingState(ProcessingState.COMPLETE);
-    } catch (error) {
-        console.error(error);
-        setProcessingState(ProcessingState.ERROR);
-        setErrorMessage("Failed to analyze documents. Please try again.");
-    }
-  };
-
-  const handleStartNewAudit = () => {
-      resetAll();
-  };
-
-  const handleCopyEmail = () => {
-    const text = isEditing ? editableContent : results?.phase4 || '';
-    navigator.clipboard.writeText(text);
-    setEmailCopied(true);
-    setTimeout(() => setEmailCopied(false), 2000);
-  };
-
-  const handleCopyField = (text: string, field: string) => {
-      navigator.clipboard.writeText(text);
-      setCopiedField(field);
-      setTimeout(() => setCopiedField(null), 2000);
-  };
-
-  const handleTransactionNabChange = (index: number, val: string) => {
-      const newTx = [...parsedTransactions];
-      newTx[index].currentNabRef = val;
-      setParsedTransactions(newTx);
-      
-      // Update email content dynamically (simple replace)
-      let content = isEditing ? editableContent : results?.phase4 || '';
-      // Regex to find NAB Reference: PENDING and replace it
-      // This is a simplified replacement logic
-      if (content.includes('NAB Reference:** PENDING')) {
-         const newContent = content.replace('NAB Reference:** PENDING', `NAB Reference:** ${val}`);
-         setEditableContent(newContent);
-         if (!isEditing) setIsEditing(true); // Switch to edit mode to show changes
-      }
-  };
-
-  const handleCopyTable = (id: string, type: any) => {
-      const el = document.getElementById(id);
-      if (el) {
-          const range = document.createRange();
-          range.selectNode(el);
-          window.getSelection()?.removeAllRanges();
-          window.getSelection()?.addRange(range);
-          document.execCommand('copy');
-          window.getSelection()?.removeAllRanges();
-          setReportCopied(type);
-          setTimeout(() => setReportCopied(null), 2000);
-      }
-  };
-
-  const handleDownloadCSV = () => {
-      // Implementation for CSV download
-      const headers = ['ID', 'Date', 'Staff', 'Location', 'Amount', 'Status'];
-      const csvContent = [
-          headers.join(','),
-          ...databaseRows.map(row => [row.id, row.receiptDate, row.staffName, row.ypName, row.amount, 'Processed'].join(','))
-      ].join('\n');
-      
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.setAttribute('href', url);
-      link.setAttribute('download', 'aspire_export.csv');
-      link.click();
-  };
-  
-  const handleSmartSave = () => {
-     setShowSaveModal(true);
-  };
-
-  const confirmSave = async (status: 'PENDING' | 'PAID') => {
-      setIsSaving(true);
-      setShowSaveModal(false);
-      
-      // Persist to Supabase
-      try {
-          const tx = parsedTransactions[0];
-          const { error } = await supabase.from('reimbursements').insert({
-              staff_name: tx?.formattedName || 'Unknown',
-              amount: parseFloat(tx?.amount.replace(/[^0-9.]/g, '') || '0'),
-              status: status,
-              nab_reference: tx?.currentNabRef || (status === 'PENDING' ? 'PENDING' : 'PROCESSED'),
-              raw_text: isEditing ? editableContent : results?.phase4
-          });
-          
-          if (error) throw error;
-          
-          setSaveStatus('success');
-          fetchHistory(); // Refresh DB
-      } catch (e) {
-          console.error(e);
-          setSaveStatus('error');
-      } finally {
-          setIsSaving(false);
-      }
-  };
-
-  const handleSaveEdit = () => {
-      // Logic to commit the edit to the displayed view if needed, 
-      // but we are using editableContent for display when isEditing is true anyway.
-      // This might just confirm the edit mode exit if we wanted to flip back to markdown view, 
-      // but usually we keep it in edit mode if manual changes were made until save.
-      // For now, let's just toggle editing off but keep content.
-      // Actually, if we toggle off, it renders `results.phase4` again which is the original.
-      // So we should update results.phase4 or handle it.
-      if (results) {
-          setResults({ ...results, phase4: editableContent });
-      }
-      setIsEditing(false);
-  };
-
-  const handleCancelEdit = () => {
-      setEditableContent(results?.phase4 || '');
-      setIsEditing(false);
-  };
-
-  const getSaveButtonText = () => {
-      if (isSaving) return 'Saving...';
-      if (saveStatus === 'success') return 'Saved! Start New';
-      if (saveStatus === 'error') return 'Error - Retry';
-      return 'Save to Database';
-  };
-
   const handleSaveEmployeeList = () => {
+      localStorage.setItem('aspire_employee_list', employeeRawText);
       setEmployeeList(parseEmployeeData(employeeRawText));
       setSaveEmployeeStatus('saved');
       setTimeout(() => setSaveEmployeeStatus('idle'), 2000);
   };
+
+  // Helper to parse extracting transactions from the email content (Dynamic for Batch and Single)
+  const getParsedTransactions = () => {
+      const content = isEditing ? editableContent : results?.phase4;
+      if (!content) return [];
+
+      // Split by "**Staff Member:**" to isolate blocks
+      const parts = content.split('**Staff Member:**');
+      
+      // If only 1 part, it means no "**Staff Member:**" found (header only?), or maybe format issue.
+      if (parts.length <= 1) {
+           // Fallback attempt: check unbolded
+           const unboldedParts = content.split('Staff Member:');
+           if (unboldedParts.length > 1) {
+               return unboldedParts.slice(1).map((part, index) => parseTransactionPart(part, index));
+           }
+           return [];
+      }
+
+      return parts.slice(1).map((part, index) => parseTransactionPart(part, index));
+  };
+
+  const parseTransactionPart = (part: string, index: number) => {
+        const lines = part.split('\n');
+        // Staff name is usually the immediate text after the split
+        let staffName = lines[0].trim();
+        
+        // Find amount
+        const amountMatch = part.match(/\*\*Amount:\*\*\s*(.*)/) || part.match(/Amount:\s*(.*)/);
+        let amount = amountMatch ? amountMatch[1].replace('(Based on Receipts/Form Audit)', '').trim() : '0.00';
+        
+        // Find NAB code
+        const nabMatch = part.match(/NAB (?:Code|Reference):(?:\*\*|)\s*(.*)/i);
+        let currentNabRef = nabMatch ? nabMatch[1].trim() : '';
+        if (currentNabRef === 'PENDING') currentNabRef = ''; // Clear pending for input value
+
+        // Find Receipt ID (if exists)
+        const receiptMatch = part.match(/\*\*Receipt ID:\*\*\s*(.*)/) || part.match(/Receipt ID:\s*(.*)/);
+        const receiptId = receiptMatch ? receiptMatch[1].trim() : 'N/A';
+
+        // Format Name (Last, First -> First Last)
+        let formattedName = staffName;
+        if (staffName.includes(',')) {
+            const p = staffName.split(',');
+            if (p.length >= 2) formattedName = `${p[1].trim()} ${p[0].trim()}`;
+        }
+
+        return {
+            index,
+            staffName,
+            formattedName,
+            amount,
+            receiptId,
+            currentNabRef
+        };
+  };
+
+  const parsedTransactions = getParsedTransactions();
+
+  const handleTransactionNabChange = (index: number, newVal: string) => {
+      const content = isEditing ? editableContent : results?.phase4;
+      if (!content) return;
+
+      const marker = '**Staff Member:**';
+      const parts = content.split(marker);
+      
+      // parts[0] is header. parts[1] is transaction 0, parts[2] is transaction 1...
+      // So transaction index maps to parts[index + 1]
+      const partIndex = index + 1;
+
+      if (parts.length <= partIndex) return;
+
+      let targetPart = parts[partIndex];
+      
+      // Replace NAB line
+      if (targetPart.match(/NAB (?:Code|Reference):/i)) {
+          targetPart = targetPart.replace(/NAB (?:Code|Reference):.*/i, `NAB Code: ${newVal}`);
+      } else {
+           if (targetPart.includes('Amount:')) {
+               targetPart = targetPart.replace(/(Amount:.*)/, `$1\n**NAB Code:** ${newVal}`);
+           } else {
+               targetPart += `\n**NAB Code:** ${newVal}`;
+           }
+      }
+
+      parts[partIndex] = targetPart;
+      const newContent = parts.join(marker);
+
+      if (isEditing) {
+          setEditableContent(newContent);
+      } else {
+          setResults({ ...results!, phase4: newContent });
+      }
+  };
+
+  const fetchHistory = async () => {
+      setLoadingHistory(true);
+      try {
+          // Use 'audit_logs' as originally designed, not 'reimbursements'
+          const { data, error } = await supabase
+              .from('audit_logs')
+              .select('*')
+              .order('created_at', { ascending: false });
+          
+          if (error) throw error;
+          setHistoryData(data || []);
+      } catch (e) {
+          console.error("Error fetching history:", e);
+      } finally {
+          setLoadingHistory(false);
+      }
+  };
+
+  const parseDatabaseRows = (data: any[]) => {
+      const allRows: any[] = [];
+      data.forEach((record) => {
+          const content = record.full_email_content || "";
+          const internalId = record.id;
+          const receiptId = record.nab_code || 'N/A';
+          const timestamp = new Date(record.created_at).toLocaleString();
+          const rawDate = new Date(record.created_at);
+          
+          // Extract basic info
+          const staffName = record.staff_name || 'Unknown';
+          const amountMatch = content.match(/\*\*Amount:\*\*\s*(.*)/);
+          let totalAmount = record.amount || (amountMatch ? amountMatch[1].trim() : '0.00');
+          // Sanitize Total Amount
+          if (typeof totalAmount === 'string') {
+             totalAmount = totalAmount.replace('(Based on Receipts/Form Audit)', '').trim();
+          }
+          
+          // Improved Client/Location Extraction
+          // 1. Look for specific field
+          let ypName = 'N/A';
+          const ypMatch = content.match(/\*\*Client \/ Location:\*\*\s*(.*?)(?:\n|$)/);
+          if (ypMatch) {
+              ypName = ypMatch[1].trim();
+          }
+          
+          const dateProcessed = new Date(record.created_at).toLocaleDateString();
+          const nabRefDisplay = record.nab_code || 'PENDING';
+
+          // 2. Extract Table Rows
+          const lines = content.split('\n');
+          let foundTable = false;
+          let tableRowsFound = false;
+
+          for (let i = 0; i < lines.length; i++) {
+              const line = lines[i].trim();
+              
+              if (line.startsWith('| Receipt #') || line.startsWith('|Receipt #')) {
+                  foundTable = true;
+                  continue; // Skip header
+              }
+              if (foundTable && line.startsWith('| :---')) {
+                  continue; // Skip separator
+              }
+              if (foundTable && line.startsWith('|')) {
+                  const cols = line.split('|').map((c: string) => c.trim()).filter((c: string) => c !== '');
+                  
+                  if (cols.length >= 5) {
+                      tableRowsFound = true;
+                      const storeCol = cols[1];
+                      const dateMatch = storeCol.match(/(\d{2}\/\d{2}\/\d{2,4})/);
+                      const receiptDate = dateMatch ? dateMatch[1] : dateProcessed;
+
+                      allRows.push({
+                          id: `${internalId}-${i}`, // Unique key for React using DB ID
+                          uid: receiptId, // Display Receipt ID/Reference in UID column
+                          internalId: internalId,
+                          timestamp,
+                          rawDate,
+                          ypName,
+                          staffName,
+                          product: cols[2], // Product Name
+                          expenseType: cols[3], // Category
+                          receiptDate,
+                          amount: cols[4], // Item Amount
+                          totalAmount: cols[5], // Grand Total
+                          dateProcessed,
+                          nabCode: nabRefDisplay // Display Bank Ref in Nab Code column
+                      });
+                  }
+              }
+              if (foundTable && line === '') {
+                  foundTable = false;
+              }
+          }
+
+          if (!tableRowsFound) {
+              allRows.push({
+                  id: `${internalId}-summary`,
+                  uid: receiptId,
+                  internalId: internalId,
+                  timestamp,
+                  rawDate,
+                  ypName,
+                  staffName,
+                  product: 'Petty Cash / Reimbursement',
+                  expenseType: 'Batch Request',
+                  receiptDate: dateProcessed,
+                  amount: typeof totalAmount === 'number' ? totalAmount.toFixed(2) : totalAmount,
+                  totalAmount: typeof totalAmount === 'number' ? totalAmount.toFixed(2) : totalAmount,
+                  dateProcessed,
+                  nabCode: nabRefDisplay
+              });
+          }
+      });
+      return allRows;
+  };
+
+  const databaseRows = useMemo(() => parseDatabaseRows(historyData), [historyData]);
+  
+  const filteredDatabaseRows = useMemo(() => {
+      if (!searchTerm) return databaseRows;
+      const lower = searchTerm.toLowerCase();
+      return databaseRows.filter(r => 
+          r.staffName.toLowerCase().includes(lower) || 
+          r.ypName.toLowerCase().includes(lower) ||
+          String(r.amount).includes(lower) ||
+          String(r.uid).toLowerCase().includes(lower)
+      );
+  }, [databaseRows, searchTerm]);
+
+  // Analytics Calculations
+  const analyticsData = useMemo(() => {
+      const groupedByYP: { [key: string]: number } = {};
+      const groupedByStaff: { [key: string]: number } = {};
+      let totalSpend = 0;
+      let totalRequests = 0;
+
+      // Use filtered rows to respect search if desired, or databaseRows for all
+      // Usually analytics should be over all data or time filtered. 
+      // For now, let's use all loaded history.
+      databaseRows.forEach(row => {
+          // Parse amount safely
+          const val = parseFloat(String(row.amount).replace(/[^0-9.-]+/g,"")) || 0;
+          
+          // YP Grouping
+          const yp = row.ypName || 'Unknown';
+          groupedByYP[yp] = (groupedByYP[yp] || 0) + val;
+
+          // Staff Grouping
+          const staff = row.staffName || 'Unknown';
+          groupedByStaff[staff] = (groupedByStaff[staff] || 0) + val;
+
+          totalSpend += val;
+          totalRequests++;
+      });
+
+      return {
+          yp: Object.entries(groupedByYP).sort((a, b) => b[1] - a[1]),
+          staff: Object.entries(groupedByStaff).sort((a, b) => b[1] - a[1]),
+          totalSpend,
+          totalRequests
+      };
+  }, [databaseRows]);
 
   const handleGenerateReport = (type: 'weekly' | 'monthly' | 'quarterly' | 'yearly') => {
     const now = new Date();
@@ -380,7 +430,7 @@ export const App = () => {
 
     relevantRows.forEach(row => {
         // Extract amount safely
-        const amountStr = row.amount || "0";
+        const amountStr = String(row.amount) || "0";
         const val = parseFloat(amountStr.replace(/[^0-9.-]+/g,"")) || 0;
         
         totalSpend += val;
@@ -447,6 +497,465 @@ export const App = () => {
     setTimeout(() => setReportCopied(null), 2000);
   };
 
+  const handleDownloadCSV = () => {
+    if (filteredDatabaseRows.length === 0) return;
+
+    const headers = [
+        "UID", "Time Stamp", "YP Name", "Staff Name", "Type of expense", 
+        "Product", "Receipt Date", "Amount", "Total Amount", "Date Processed", "Nab Code"
+    ];
+
+    const csvRows = [
+        headers.join(','),
+        ...filteredDatabaseRows.map(row => {
+            const escape = (val: any) => `"${String(val || '').replace(/"/g, '""')}"`;
+            return [
+                escape(row.uid),
+                escape(row.timestamp),
+                escape(row.ypName),
+                escape(row.staffName),
+                escape(row.expenseType),
+                escape(row.product),
+                escape(row.receiptDate),
+                escape(row.amount),
+                escape(row.totalAmount),
+                escape(row.dateProcessed),
+                escape(row.nabCode)
+            ].join(',');
+        })
+    ];
+
+    const csvString = csvRows.join('\n');
+    const blob = new Blob([csvString], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `reimbursement_database_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const resetAll = () => {
+    setReceiptFiles([]);
+    setFormFiles([]);
+    setProcessingState(ProcessingState.IDLE);
+    setResults(null);
+    setErrorMessage(null);
+    setEmailCopied(false);
+    setSaveStatus('idle');
+    setIsEditing(false);
+  };
+
+  const handleStartNewAudit = () => {
+      resetAll();
+      fetchHistory();
+  };
+
+  const handleCopyEmail = async () => {
+    if (!results?.phase4) return;
+    if (isEditing) {
+        navigator.clipboard.writeText(editableContent);
+        setEmailCopied(true);
+        setTimeout(() => setEmailCopied(false), 2000);
+        return;
+    }
+    const emailElement = document.getElementById('email-output-content');
+    if (emailElement) {
+        try {
+            const blobHtml = new Blob([emailElement.innerHTML], { type: 'text/html' });
+            const blobText = new Blob([emailElement.innerText], { type: 'text/plain' });
+            const data = [new ClipboardItem({ 'text/html': blobHtml, 'text/plain': blobText })];
+            await navigator.clipboard.write(data);
+            setEmailCopied(true);
+            setTimeout(() => setEmailCopied(false), 2000);
+            return;
+        } catch (e) {
+            console.warn("ClipboardItem API failed", e);
+        }
+    }
+    navigator.clipboard.writeText(results.phase4);
+    setEmailCopied(true);
+    setTimeout(() => setEmailCopied(false), 2000);
+  };
+
+  const handleCopyField = (text: string, fieldName: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedField(fieldName);
+    setTimeout(() => setCopiedField(null), 2000);
+  };
+
+  const handleCopyTable = async (elementId: string, type: 'nab' | 'eod') => {
+      const element = document.getElementById(elementId);
+      if (!element) return;
+      try {
+          const blobHtml = new Blob([element.outerHTML], { type: 'text/html' });
+          const blobText = new Blob([element.innerText], { type: 'text/plain' });
+          const data = [new ClipboardItem({ 'text/html': blobHtml, 'text/plain': blobText })];
+          await navigator.clipboard.write(data);
+          setReportCopied(type);
+          setTimeout(() => setReportCopied(null), 2000);
+      } catch (e) {
+          console.error("Failed to copy table", e);
+      }
+  };
+
+  // Restored handleSaveToCloud logic for robust saving
+  const handleSaveToCloud = async (contentOverride?: string) => {
+    const contentToSave = contentOverride || (isEditing ? editableContent : results?.phase4);
+    if (!contentToSave) return;
+    
+    setIsSaving(true);
+    setSaveStatus('idle');
+
+    try {
+      const staffBlocks = contentToSave.split('**Staff Member:**');
+      
+      const payloads = [];
+
+      if (staffBlocks.length > 1) {
+          for (let i = 1; i < staffBlocks.length; i++) {
+              const block = staffBlocks[i];
+              const staffNameLine = block.split('\n')[0].trim();
+              
+              const amountMatch = block.match(/\*\*Amount:\*\*\s*(.*)/);
+              const nabMatch = block.match(/NAB (?:Code|Reference):(?:\*\*|)\s*(.*)/i);
+              
+              const staffName = staffNameLine;
+              const amount = amountMatch ? amountMatch[1].replace('(Based on Receipts/Form Audit)', '').trim() : '0.00';
+              let uniqueReceiptId = nabMatch ? nabMatch[1].trim() : null;
+              
+              if (!uniqueReceiptId || uniqueReceiptId === 'PENDING') {
+                   uniqueReceiptId = `BATCH-${Date.now()}-${i}-${Math.floor(Math.random()*1000)}`;
+              }
+
+              payloads.push({
+                  staff_name: staffName,
+                  amount: amount,
+                  nab_code: uniqueReceiptId,
+                  full_email_content: contentToSave, 
+                  created_at: new Date().toISOString()
+              });
+          }
+      } else {
+          const staffNameMatch = contentToSave.match(/\*\*Staff Member:\*\*\s*(.*)/);
+          const amountMatch = contentToSave.match(/\*\*Amount:\*\*\s*(.*)/);
+          const receiptIdMatch = contentToSave.match(/\*\*Receipt ID:\*\*\s*(.*)/);
+          const nabMatch = contentToSave.match(/NAB (?:Code|Reference):(?:\*\*|)\s*(.*)/i);
+
+          const staffName = staffNameMatch ? staffNameMatch[1].trim() : 'Unknown';
+          const amount = amountMatch ? amountMatch[1].replace('(Based on Receipts/Form Audit)', '').trim() : '0.00';
+          
+          let uniqueReceiptId = nabMatch && nabMatch[1].trim() !== 'PENDING' ? nabMatch[1].trim() : (receiptIdMatch ? receiptIdMatch[1].trim() : null);
+
+          if (!uniqueReceiptId && (contentToSave.toLowerCase().includes('discrepancy') || contentToSave.toLowerCase().includes('mismatch') || contentToSave.includes('STATUS: PENDING'))) {
+              uniqueReceiptId = `DISC-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+          }
+
+          if (uniqueReceiptId) {
+             const { data: existingData } = await supabase.from('audit_logs').select('id').eq('nab_code', uniqueReceiptId).single();
+             if (existingData) {
+                  setSaveStatus('duplicate');
+                  setIsSaving(false);
+                  setErrorMessage(`Duplicate Receipt Detected! ID: ${uniqueReceiptId} already exists.`);
+                  return; 
+             }
+          }
+
+          payloads.push({
+              staff_name: staffName,
+              amount: amount,
+              nab_code: uniqueReceiptId, 
+              full_email_content: contentToSave, 
+              created_at: new Date().toISOString()
+          });
+      }
+
+      // Save to 'audit_logs' table
+      const { error } = await supabase.from('audit_logs').insert(payloads);
+      if (error) throw error;
+
+      setSaveStatus('success');
+      fetchHistory();
+      
+    } catch (error) {
+      console.error("Supabase Save Error:", error);
+      setSaveStatus('error');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const confirmSave = (status: 'PENDING' | 'PAID') => {
+      const tag = status === 'PENDING' ? '\n\n<!-- STATUS: PENDING -->' : '\n\n<!-- STATUS: PAID -->';
+      const baseContent = isEditing ? editableContent : results?.phase4 || '';
+      const finalContent = baseContent.includes('<!-- STATUS:') ? baseContent : baseContent + tag;
+      
+      handleSaveToCloud(finalContent);
+      setShowSaveModal(false);
+  };
+
+  const handleSmartSave = () => {
+    const hasTransactions = parsedTransactions.length > 0;
+    const allHaveRef = parsedTransactions.every(tx => !!tx.currentNabRef && tx.currentNabRef.trim() !== '' && tx.currentNabRef !== 'PENDING');
+    const status = (hasTransactions && allHaveRef) ? 'PAID' : 'PENDING';
+    confirmSave(status);
+  };
+
+  const handleProcess = async () => {
+    if (receiptFiles.length === 0) {
+      setErrorMessage("Please upload at least one receipt.");
+      return;
+    }
+
+    setProcessingState(ProcessingState.PROCESSING);
+    setErrorMessage(null);
+    setResults(null);
+    setEmailCopied(false);
+    setSaveStatus('idle');
+    setIsEditing(false);
+
+    try {
+      const receiptImages = await Promise.all(receiptFiles.map(async (file) => ({
+        mimeType: file.type || 'application/octet-stream', 
+        data: await fileToBase64(file),
+        name: file.name
+      })));
+
+      const formImage = formFiles.length > 0 ? {
+        mimeType: formFiles[0].type || 'application/octet-stream',
+        data: await fileToBase64(formFiles[0]),
+        name: formFiles[0].name
+      } : null;
+
+      const fullResponse = await analyzeReimbursement(receiptImages, formImage);
+
+      const parseSection = (tagStart: string, tagEnd: string, text: string) => {
+        const startIdx = text.indexOf(tagStart);
+        const endIdx = text.indexOf(tagEnd);
+        if (startIdx === -1 || endIdx === -1) return "Section not found or parsing error.";
+        return text.substring(startIdx + tagStart.length, endIdx).trim();
+      };
+
+      if (!fullResponse) throw new Error("No response from AI");
+
+      let phase1 = parseSection('<<<PHASE_1_START>>>', '<<<PHASE_1_END>>>', fullResponse);
+      const phase2 = parseSection('<<<PHASE_2_START>>>', '<<<PHASE_2_END>>>', fullResponse);
+      const phase3 = parseSection('<<<PHASE_3_START>>>', '<<<PHASE_3_END>>>', fullResponse);
+      let phase4 = parseSection('<<<PHASE_4_START>>>', '<<<PHASE_4_END>>>', fullResponse);
+
+      const staffNameMatch = phase4.match(/\*\*Staff Member:\*\*\s*(.*)/);
+      if (staffNameMatch) {
+          const originalName = staffNameMatch[1].trim();
+          const matchedEmployee = findBestEmployeeMatch(originalName, employeeList);
+          
+          if (matchedEmployee) {
+              phase4 = phase4.replace(originalName, matchedEmployee.fullName);
+               if (phase1.includes(originalName)) {
+                   phase1 = phase1.replace(originalName, matchedEmployee.fullName);
+               }
+          }
+      }
+
+      setResults({ phase1, phase2, phase3, phase4 });
+      setProcessingState(ProcessingState.COMPLETE);
+    } catch (err: any) {
+      console.error(err);
+      let msg = err.message || "An unexpected error occurred during processing.";
+      if (msg.includes('400')) msg = "Error 400: The AI could not process the file. Please ensure you are uploading valid Images, PDFs, Word Docs, or Excel files.";
+      setErrorMessage(msg);
+      setProcessingState(ProcessingState.ERROR);
+    }
+  };
+
+  const handleSaveEdit = () => {
+     if (results) {
+         setResults({ ...results, phase4: editableContent });
+         setIsEditing(false);
+     }
+  };
+
+  const handleCancelEdit = () => {
+      if (results) setEditableContent(results.phase4);
+      setIsEditing(false);
+  };
+
+  const handleDismissDiscrepancy = (id: number) => {
+      if (!window.confirm("Resolve this discrepancy? This will remove it from the Outstanding list but keep the record in the Daily Activity Tracker.")) return;
+      
+      const newIds = [...dismissedIds, id];
+      setDismissedIds(newIds);
+      localStorage.setItem('aspire_dismissed_discrepancies', JSON.stringify(newIds));
+  };
+
+  const processRecords = (records: any[]) => {
+      return records.map(r => {
+          const content = r.full_email_content || "";
+          
+          const nabRefMatch = content.match(/\*\*NAB (?:Code|Reference):?\*\*?\s*(.*?)(?:\n|$)/i);
+          const clientMatch = content.match(/\*\*Client \/ Location:\*\*\s*(.*?)(?:\n|$)/i);
+
+          let isDiscrepancy = false;
+          if (content.includes("<!-- STATUS: PENDING -->")) {
+              isDiscrepancy = true;
+          } else if (content.includes("<!-- STATUS: PAID -->")) {
+              isDiscrepancy = false;
+          } else {
+              isDiscrepancy = content.toLowerCase().includes("discrepancy was found") || 
+                              content.toLowerCase().includes("mismatch") ||
+                              !content.toLowerCase().includes("successfully processed");
+          }
+          
+          const clientName = clientMatch ? clientMatch[1].trim() : 'N/A';
+          
+          let nabRef = r.nab_code;
+          
+          if (!nabRef || nabRef === 'PENDING' || (typeof nabRef === 'string' && (nabRef.startsWith('DISC-') || nabRef.startsWith('BATCH-')))) {
+              if (nabRefMatch) nabRef = nabRefMatch[1].trim();
+          }
+
+          if (!nabRef || nabRef === 'PENDING' || (typeof nabRef === 'string' && nabRef.startsWith('DISC-'))) {
+              nabRef = isDiscrepancy ? 'N/A' : 'PENDING';
+          }
+
+          let discrepancyReason = '';
+          if (isDiscrepancy) {
+              const formAmountMatch = content.match(/Amount on Form:\s*\$([0-9,.]+)/);
+              const receiptAmountMatch = content.match(/Actual Receipt Total:\s*\$([0-9,.]+)/);
+              if (formAmountMatch && receiptAmountMatch) {
+                  discrepancyReason = `Mismatch: Form $${formAmountMatch[1]} / Rcpt $${receiptAmountMatch[1]}`;
+              } else {
+                  discrepancyReason = 'Discrepancy / Pending';
+              }
+          }
+
+          return {
+              ...r,
+              nabRef: nabRef,
+              clientName: clientName,
+              isDiscrepancy: isDiscrepancy,
+              discrepancyReason: discrepancyReason,
+              time: new Date(r.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              date: new Date(r.created_at).toLocaleDateString(),
+              created_at: r.created_at,
+              id: r.id,
+              staff_name: r.staff_name || 'Unknown',
+              amount: (r.amount || '0.00').replace('(Based on Receipts/Form Audit)', '').replace(/\*/g, '').trim(),
+              isToday: new Date(r.created_at).toDateString() === new Date().toDateString()
+          };
+      });
+  };
+
+  const generateEODSchedule = (records: any[]) => {
+     let currentTime = new Date();
+     currentTime.setHours(6, 59, 0, 0); 
+     
+     const scheduled = records.map(record => {
+         const activity = record.isDiscrepancy ? 'Pending' : 'Reimbursement';
+
+         const startTime = new Date(currentTime);
+         startTime.setMinutes(startTime.getMinutes() + 1);
+
+         let duration = 0;
+         if (activity === 'Reimbursement') {
+             duration = Math.floor(Math.random() * (15 - 10 + 1) + 10);
+         } else {
+             duration = Math.floor(Math.random() * (20 - 15 + 1) + 15);
+         }
+         
+         const endTime = new Date(startTime);
+         endTime.setMinutes(endTime.getMinutes() + duration);
+         
+         currentTime = new Date(endTime);
+         
+         const timeStartStr = startTime.toLocaleTimeString('en-GB', { hour12: false });
+         const timeEndStr = endTime.toLocaleTimeString('en-GB', { hour12: false });
+         
+         let status = '';
+
+         if (record.isDiscrepancy) {
+             const reason = record.discrepancyReason ? record.discrepancyReason.replace('Mismatch: ', '') : 'Pending';
+             status = `Rematch (${reason})`; 
+         } else {
+             const refSuffix = (record.nabRef && record.nabRef !== 'PENDING' && record.nabRef !== 'N/A') ? ` [${record.nabRef}]` : '';
+             status = `Paid to Nab${refSuffix}`;
+         }
+
+         return {
+             ...record,
+             eodTimeStart: timeStartStr,
+             eodTimeEnd: timeEndStr,
+             eodActivity: activity,
+             eodStatus: status
+         };
+     });
+
+     const idleStartTime = new Date(currentTime);
+     idleStartTime.setMinutes(idleStartTime.getMinutes() + 1);
+     
+     const idleEndTime = new Date(currentTime);
+     idleEndTime.setHours(15, 0, 0, 0);
+     idleEndTime.setMinutes(0);
+     idleEndTime.setSeconds(0);
+
+     if (idleStartTime > idleEndTime) {
+         idleEndTime.setTime(idleStartTime.getTime());
+     }
+
+     const idleRow = {
+         id: 'idle-row',
+         eodTimeStart: idleStartTime.toLocaleTimeString('en-GB', { hour12: false }),
+         eodTimeEnd: idleEndTime.toLocaleTimeString('en-GB', { hour12: false }),
+         eodActivity: 'IDLE',
+         clientName: '',
+         staff_name: '',
+         amount: '',
+         date: '',
+         eodStatus: ''
+     };
+
+     return [...scheduled, idleRow];
+  };
+
+  const allProcessedRecords = useMemo<any[]>(() => processRecords(historyData), [historyData]);
+
+  const todaysProcessedRecords = useMemo<any[]>(() => {
+      return allProcessedRecords
+        .filter(r => r.isToday)
+        .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  }, [allProcessedRecords]);
+
+  const pendingRecords = useMemo(() => {
+      return allProcessedRecords
+          .filter(r => r.isDiscrepancy && !dismissedIds.includes(r.id))
+          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }, [allProcessedRecords, dismissedIds]);
+
+  const eodData = generateEODSchedule(todaysProcessedRecords);
+  
+  const reimbursementCount = todaysProcessedRecords.filter(r => !r.isDiscrepancy).length;
+  const pendingCountToday = todaysProcessedRecords.filter(r => r.isDiscrepancy).length;
+
+  const nabReportData: any[] = todaysProcessedRecords.filter(r => !r.isDiscrepancy && r.nabRef !== 'PENDING' && r.nabRef !== '');
+  const totalAmount = nabReportData.reduce((sum, r) => sum + parseFloat(String(r.amount).replace(/[^0-9.-]+/g,"")), 0);
+  
+  const getSaveButtonText = () => {
+      if (isSaving) return <><RefreshCw size={12} className="animate-spin" /> Saving...</>;
+      if (saveStatus === 'success') return <><RefreshCw size={12} strokeWidth={2.5} /> Start New Audit</>;
+      // Fix: CloudUpload was missing from imports
+      if (saveStatus === 'error') return <><CloudUpload size={12} strokeWidth={2.5} /> Retry Save</>;
+      // Fix: CloudUpload was missing from imports
+      if (saveStatus === 'duplicate') return <><CloudUpload size={12} strokeWidth={2.5} /> Duplicate!</>;
+      
+      if (results?.phase4.toLowerCase().includes('discrepancy')) {
+          // Fix: CloudUpload was missing from imports
+          return <><CloudUpload size={12} strokeWidth={2.5} /> Save Record</>;
+      }
+      // Fix: CloudUpload was missing from imports
+      return <><CloudUpload size={12} strokeWidth={2.5} /> Save & Pay</>;
+  };
+
   const handleCopyGeneratedReport = async () => {
       const content = isEditingReport ? reportEditableContent : generatedReport;
       if (!content) return;
@@ -480,10 +989,25 @@ export const App = () => {
       setReportEditableContent(generatedReport || '');
       setIsEditingReport(false);
   };
-  
-  // Reconstruct the return JSX from the provided snippet
+
+  if (loadingSplash) {
+    return (
+      <div className="fixed inset-0 bg-[#0f1115] z-50 flex flex-col items-center justify-center animate-in fade-in duration-700">
+         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-indigo-900/20 rounded-full blur-[100px]"></div>
+         <div className="relative z-10 flex flex-col items-center animate-pulse">
+            <Logo size={120} showText={true} />
+            <div className="mt-8 w-64 h-1 bg-gray-800 rounded-full overflow-hidden">
+                <div className="h-full bg-indigo-500 animate-[width_5s_ease-in-out_forwards]" style={{width: '0%'}}></div>
+            </div>
+            <p className="mt-4 text-slate-500 text-sm font-medium tracking-widest uppercase">Initializing Auditor...</p>
+         </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#0f1115] text-slate-300 font-sans">
+      {/* ... (Modals and Header) ... */}
       {showSaveModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
               <div className="bg-[#1c1e24] border border-white/10 rounded-3xl p-8 max-w-md w-full shadow-2xl scale-100 animate-in zoom-in-95 duration-200">
@@ -593,6 +1117,7 @@ export const App = () => {
         <main className="w-full">
           {activeTab === 'dashboard' && (
             <div className="flex flex-col lg:flex-row gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                {/* ... (Dashboard Content) ... */}
                 <div className="w-full lg:w-[400px] space-y-6 flex-shrink-0">
                 <div className="bg-[#1c1e24]/80 backdrop-blur-md rounded-[32px] border border-white/5 shadow-xl overflow-hidden relative group">
                   <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-white/20 to-transparent"></div>
@@ -893,7 +1418,7 @@ export const App = () => {
                                     </td>
 
                                     <td style={{ padding: '16px', textAlign: 'right', verticalAlign: 'middle', fontWeight: 'bold', color: '#111827' }}>
-                                        ${Math.abs(parseFloat(row.amount.replace(/[^0-9.-]+/g,""))).toFixed(2)}
+                                        ${Math.abs(parseFloat(String(row.amount).replace(/[^0-9.-]+/g,""))).toFixed(2)}
                                     </td>
 
                                     <td style={{ padding: '16px', textAlign: 'center', verticalAlign: 'middle' }}>
@@ -969,7 +1494,7 @@ export const App = () => {
                                     <td style={{ border: '1px solid #d1d5db', padding: '8px 12px', color: '#374151', verticalAlign: 'top', fontWeight: row.eodActivity === 'IDLE' ? 'bold' : 'normal' }}>{row.eodActivity}</td>
                                     <td style={{ border: '1px solid #d1d5db', padding: '8px 12px', color: '#374151', verticalAlign: 'top', textTransform: 'uppercase' }}>{row.staff_name}</td>
                                     <td style={{ border: '1px solid #d1d5db', padding: '8px 12px', color: '#374151', verticalAlign: 'top' }}>
-                                      {row.eodActivity === 'IDLE' ? '' : `$${parseFloat(row.amount.replace(/[^0-9.-]+/g,"")).toFixed(2)}`}
+                                      {row.eodActivity === 'IDLE' ? '' : `$${parseFloat(String(row.amount).replace(/[^0-9.-]+/g,"")).toFixed(2)}`}
                                     </td>
                                     <td style={{ border: '1px solid #d1d5db', padding: '8px 12px', color: '#374151', verticalAlign: 'top' }}>{row.eodStatus}</td>
                                  </tr>
@@ -1124,7 +1649,7 @@ export const App = () => {
                         </div>
                         <div className="p-6">
                             <div className="space-y-4 max-h-[400px] overflow-y-auto custom-scrollbar">
-                                {analyticsData.yp.map(([name, amount]: any, idx: number) => (
+                                {analyticsData.yp.map(([name, amount], idx) => (
                                     <div key={idx} className="flex items-center justify-between p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors">
                                         <div className="flex items-center gap-3">
                                             <div className="w-8 h-8 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold text-xs">
@@ -1159,7 +1684,7 @@ export const App = () => {
                         </div>
                         <div className="p-6">
                             <div className="space-y-4 max-h-[400px] overflow-y-auto custom-scrollbar">
-                                {analyticsData.staff.map(([name, amount]: any, idx: number) => (
+                                {analyticsData.staff.map(([name, amount], idx) => (
                                     <div key={idx} className="flex items-center justify-between p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors">
                                         <div className="flex items-center gap-3">
                                             <div className="w-8 h-8 rounded-full bg-purple-500/20 text-purple-400 flex items-center justify-center font-bold text-xs">
@@ -1262,6 +1787,7 @@ export const App = () => {
                 </div>
 
                 <div className="p-8 space-y-8">
+                    {/* Employee Database Section */}
                     <div className="space-y-4">
                         <div className="flex items-center justify-between">
                             <div>
@@ -1301,6 +1827,7 @@ export const App = () => {
 
                     <div className="h-px bg-white/5"></div>
 
+                    {/* System Maintenance */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                         <div>
                             <h3 className="text-lg font-medium text-white mb-2">System Maintenance</h3>
