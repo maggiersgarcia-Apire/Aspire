@@ -1,4 +1,4 @@
-// Update trigger: forcing vercel redeploy
+
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   RefreshCw, AlertCircle, Send, LayoutDashboard, CheckCircle, 
