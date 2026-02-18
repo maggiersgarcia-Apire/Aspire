@@ -275,8 +275,14 @@ export const App = () => {
           const dateProcessed = new Date(record.created_at).toLocaleDateString();
           const nabRefDisplay = record.nab_code || 'PENDING';
 
-          // Placeholder for Young Person Name column
-          const youngPersonName = "Placeholder Name"; 
+          // Extract Young Person Name from "Name / Location" string
+          let youngPersonName = ypName;
+          if (ypName && ypName !== 'N/A' && ypName.includes('/')) {
+              const parts = ypName.split('/');
+              if (parts.length > 0) {
+                  youngPersonName = parts[0].trim();
+              }
+          }
 
           // 2. Extract Table Rows
           const lines = content.split('\n');
@@ -357,6 +363,7 @@ export const App = () => {
       return databaseRows.filter(r => 
           r.staffName.toLowerCase().includes(lower) || 
           r.ypName.toLowerCase().includes(lower) ||
+          r.youngPersonName.toLowerCase().includes(lower) ||
           String(r.amount).includes(lower) ||
           String(r.uid).toLowerCase().includes(lower)
       );
@@ -400,25 +407,75 @@ export const App = () => {
 
   const handleSaveRowChanges = async () => {
       if (!editedRowData) return;
-      // In a real app, update Supabase here. 
-      // Since we map from a big text blob mostly, editing specific fields might need updating the blob or separate columns.
-      // For this demo, we'll update the local state to reflect changes instantly.
       
+      const originalRecord = historyData.find(r => r.id === editedRowData.internalId);
+      if (!originalRecord) {
+          console.error("Could not find original record to update");
+          return;
+      }
+
+      let newContent = originalRecord.full_email_content || "";
+
+      // 1. Update Staff Name in Text Blob
+      // Regex: Look for "**Staff Member:**" followed by content until newline
+      newContent = newContent.replace(/(\*\*Staff Member:\*\*\s*)(.*?)(\n|$)/, `$1${editedRowData.staffName}$3`);
+
+      // 2. Update Amount in Text Blob
+      const amountVal = String(editedRowData.totalAmount).replace(/[^0-9.]/g, '');
+      // Regex: Look for "**Amount:**" maybe followed by "$"
+      newContent = newContent.replace(/(\*\*Amount:\*\*\s*\$?)(.*?)(\n|$)/, `$1$${amountVal}$3`);
+
+      // 3. Update Client / Location (ypName) in Text Blob
+      // Regex: Look for "**Client / Location:**"
+      if (newContent.match(/\*\*Client \/ Location:\*\*/)) {
+          newContent = newContent.replace(/(\*\*Client \/ Location:\*\*\s*)(.*?)(\n|$)/, `$1${editedRowData.ypName}$3`);
+      } else {
+          // If not found, append it securely
+          newContent += `\n**Client / Location:** ${editedRowData.ypName}`;
+      }
+
+      // 4. Update NAB Code in Text Blob
+      // Regex: Look for "NAB Code:" or "NAB Reference:"
+      if (newContent.match(/NAB (?:Code|Reference):/)) {
+          newContent = newContent.replace(/(NAB (?:Code|Reference):(?:\*\*|)\s*)(.*?)(\n|$)/, `$1${editedRowData.nabCode}$3`);
+      } else {
+          newContent += `\n**NAB Code:** ${editedRowData.nabCode}`;
+      }
+
+      // Optimistic Update (Local State)
       const updatedHistory = historyData.map(item => {
           if (item.id === editedRowData.internalId) {
               return { 
                   ...item, 
                   staff_name: editedRowData.staffName,
-                  amount: editedRowData.totalAmount, // Assuming editing total amount
+                  amount: parseFloat(amountVal), 
                   nab_code: editedRowData.nabCode,
-                  client_location: editedRowData.ypName
-                  // Note: deep updating the full_email_content based on fields is complex, skipping for this demo.
+                  full_email_content: newContent
               };
           }
           return item;
       });
       setHistoryData(updatedHistory);
-      handleRowModalClose();
+
+      // Persist to Supabase
+      try {
+          const { error } = await supabase
+              .from('audit_logs')
+              .update({
+                  staff_name: editedRowData.staffName,
+                  amount: parseFloat(amountVal),
+                  nab_code: editedRowData.nabCode,
+                  full_email_content: newContent
+              })
+              .eq('id', editedRowData.internalId);
+
+          if (error) throw error;
+          
+          handleRowModalClose();
+      } catch (e) {
+          console.error("Supabase Update Error", e);
+          alert("Failed to save changes to the database. Please check your connection.");
+      }
   };
 
   // ... (Analytics and Reports functions remain the same) ...
@@ -1238,6 +1295,8 @@ export const App = () => {
                         <table className="w-full text-left border-collapse font-sans text-xs text-slate-300">
                            <thead className="sticky top-0 z-10 bg-[#111216] text-white font-bold uppercase tracking-wider shadow-lg">
                               <tr>
+                                 <th className="px-4 py-4 border-b border-white/10 whitespace-nowrap min-w-[120px]">UID</th>
+                                 <th className="px-4 py-4 border-b border-white/10 whitespace-nowrap min-w-[150px]">Time Stamp</th>
                                  <th className="px-4 py-4 border-b border-white/10 whitespace-nowrap min-w-[200px]">Client / Location</th>
                                  <th className="px-4 py-4 border-b border-white/10 whitespace-nowrap min-w-[150px]">YP NAME</th>
                                  <th className="px-4 py-4 border-b border-white/10 whitespace-nowrap min-w-[150px]">Staff Name</th>
@@ -1257,8 +1316,10 @@ export const App = () => {
                                     onClick={() => handleRowClick(row)}
                                     className="hover:bg-white/5 transition-colors group cursor-pointer"
                                  >
+                                    <td className="px-4 py-3 border-r border-white/5 whitespace-nowrap font-mono text-[10px] text-slate-500">{row.uid}</td>
+                                    <td className="px-4 py-3 border-r border-white/5 whitespace-nowrap text-slate-500 text-[10px]">{row.timestamp}</td>
                                     <td className="px-4 py-3 border-r border-white/5 whitespace-nowrap truncate max-w-[250px]" title={row.ypName}>{row.ypName}</td>
-                                    <td className="px-4 py-3 border-r border-white/5 whitespace-nowrap text-slate-300">{row.youngPersonName}</td>
+                                    <td className="px-4 py-3 border-r border-white/5 whitespace-nowrap text-slate-300 font-medium text-emerald-300">{row.youngPersonName}</td>
                                     <td className="px-4 py-3 border-r border-white/5 whitespace-nowrap uppercase font-medium text-indigo-300">{row.staffName}</td>
                                     <td className="px-4 py-3 border-r border-white/5 whitespace-nowrap text-slate-400">{row.expenseType}</td>
                                     <td className="px-4 py-3 border-r border-white/5 whitespace-nowrap text-slate-400 truncate max-w-[200px]" title={row.product}>{row.product}</td>
@@ -1276,7 +1337,8 @@ export const App = () => {
                 </div>
              </div>
           )}
-
+          
+          {/* ... (Rest of the file remains unchanged from line 1000 onwards in previous version) ... */}
           {activeTab === 'dashboard' && (
             // ... (Dashboard content preserved) ...
             <div className="flex flex-col lg:flex-row gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -1525,6 +1587,7 @@ export const App = () => {
           {/* ... (Other Tabs like NAB, EOD, Analytics, Settings remain the same) ... */}
           {activeTab === 'nab_log' && (
              <div className="bg-[#1c1e24]/80 backdrop-blur-md rounded-[32px] border border-white/5 shadow-xl overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
+                {/* ... (NAB Log content preserved) ... */}
                 <div className="px-8 py-6 border-b border-white/5 flex items-center justify-between">
                    <div className="flex items-center gap-3">
                       <CreditCard className="text-emerald-400" />
@@ -1611,6 +1674,7 @@ export const App = () => {
           
           {activeTab === 'eod' && (
              <div className="bg-[#1c1e24]/80 backdrop-blur-md rounded-[32px] border border-white/5 shadow-xl overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
+                {/* ... (EOD content preserved) ... */}
                 <div className="px-8 py-6 border-b border-white/5 flex items-center justify-between">
                    <div className="flex items-center gap-3">
                       <ClipboardList className="text-indigo-400" />
