@@ -1,3 +1,4 @@
+// Update trigger: forcing vercel redeploy
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   RefreshCw, AlertCircle, Send, LayoutDashboard, CheckCircle, 
@@ -833,13 +834,14 @@ ${results.phase1}
          const numericAmount = parseFloat(record.amount.replace(/[^0-9.-]+/g,""));
 
          if (record.isDiscrepancy) {
-             const reason = record.discrepancyReason.replace('Mismatch: ', '');
+             const reason = record.discrepancyReason ? record.discrepancyReason.replace('Mismatch: ', '') : 'Pending';
              status = `Rematch (${reason})`; 
          } else {
              if (numericAmount > 300) {
                  status = `For Julian approval (Amount > $300)`;
              } else {
-                 status = `Paid to Nab`;
+                 const refSuffix = (record.nabRef && record.nabRef !== 'PENDING' && record.nabRef !== 'N/A') ? ` [${record.nabRef}]` : '';
+                 status = `Paid to Nab${refSuffix}`;
              }
          }
 
@@ -1383,6 +1385,72 @@ ${results.phase1}
                                   <td style={{ padding: '16px', textAlign: 'right', color: '#111827', fontWeight: 'bold', fontSize: '15px' }}>${totalAmount.toFixed(2)}</td>
                                   <td></td>
                               </tr>
+                           </tbody>
+                        </table>
+                    </div>
+                </div>
+             </div>
+          )}
+          
+          {activeTab === 'eod' && (
+             <div className="bg-[#1c1e24]/80 backdrop-blur-md rounded-[32px] border border-white/5 shadow-xl overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <div className="px-8 py-6 border-b border-white/5 flex items-center justify-between">
+                   <div className="flex items-center gap-3">
+                      <ClipboardList className="text-indigo-400" />
+                      <h2 className="text-xl font-semibold text-white">End of Day Schedule</h2>
+                   </div>
+                   <div className="flex items-center gap-4">
+                       <div className="flex gap-4 mr-4 text-sm">
+                           <div className="flex flex-col items-end">
+                               <span className="text-slate-500 text-[10px] uppercase tracking-wider font-bold">Processed</span>
+                               <span className="text-emerald-400 font-mono font-bold">{reimbursementCount}</span>
+                           </div>
+                           <div className="flex flex-col items-end">
+                               <span className="text-slate-500 text-[10px] uppercase tracking-wider font-bold">Pending</span>
+                               <span className="text-red-400 font-mono font-bold">{pendingCountToday}</span>
+                           </div>
+                       </div>
+                       <button onClick={() => handleCopyTable('eod-table', 'eod')} className={`px-4 py-2 rounded-full font-medium text-sm transition-all flex items-center gap-2 ${reportCopied === 'eod' ? 'bg-indigo-500 text-white' : 'bg-white/10 hover:bg-white/20 text-white'}`}>
+                          {reportCopied === 'eod' ? <Check size={16} /> : <Copy size={16} />}
+                          {reportCopied === 'eod' ? 'Copied Schedule!' : 'Copy for Outlook'}
+                       </button>
+                       <button onClick={fetchHistory} className="p-2 bg-white/5 rounded-full hover:bg-white/10 transition-colors text-slate-400 hover:text-white">
+                          <RefreshCw size={18} className={loadingHistory ? 'animate-spin' : ''} />
+                       </button>
+                   </div>
+                </div>
+
+                <div className="p-8 overflow-x-auto">
+                    <div className="bg-white rounded-lg p-1 overflow-hidden">
+                        <table id="eod-table" style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'Arial, sans-serif', fontSize: '13px', backgroundColor: '#ffffff' }}>
+                           <thead>
+                              <tr style={{ backgroundColor: '#f3f4f6' }}>
+                                 <th style={{ border: '1px solid #d1d5db', padding: '8px 12px', textAlign: 'left', fontWeight: 'bold', color: '#111827', width: '100px' }}>Start</th>
+                                 <th style={{ border: '1px solid #d1d5db', padding: '8px 12px', textAlign: 'left', fontWeight: 'bold', color: '#111827', width: '100px' }}>End</th>
+                                 <th style={{ border: '1px solid #d1d5db', padding: '8px 12px', textAlign: 'left', fontWeight: 'bold', color: '#111827', width: '150px' }}>Activity</th>
+                                 <th style={{ border: '1px solid #d1d5db', padding: '8px 12px', textAlign: 'left', fontWeight: 'bold', color: '#111827', width: '200px' }}>Staff Name</th>
+                                 <th style={{ border: '1px solid #d1d5db', padding: '8px 12px', textAlign: 'left', fontWeight: 'bold', color: '#111827', width: '120px' }}>Amount</th>
+                                 <th style={{ border: '1px solid #d1d5db', padding: '8px 12px', textAlign: 'left', fontWeight: 'bold', color: '#111827' }}>Description / Status</th>
+                              </tr>
+                           </thead>
+                           <tbody>
+                              {eodData.map((row: any, idx: number) => (
+                                 <tr key={idx} style={{ backgroundColor: '#ffffff' }}>
+                                    <td style={{ border: '1px solid #d1d5db', padding: '8px 12px', color: '#374151', verticalAlign: 'top' }}>{row.eodTimeStart}</td>
+                                    <td style={{ border: '1px solid #d1d5db', padding: '8px 12px', color: '#374151', verticalAlign: 'top' }}>{row.eodTimeEnd}</td>
+                                    <td style={{ border: '1px solid #d1d5db', padding: '8px 12px', color: '#374151', verticalAlign: 'top', fontWeight: row.eodActivity === 'IDLE' ? 'bold' : 'normal' }}>{row.eodActivity}</td>
+                                    <td style={{ border: '1px solid #d1d5db', padding: '8px 12px', color: '#374151', verticalAlign: 'top', textTransform: 'uppercase' }}>{row.staff_name}</td>
+                                    <td style={{ border: '1px solid #d1d5db', padding: '8px 12px', color: '#374151', verticalAlign: 'top' }}>
+                                      {row.eodActivity === 'IDLE' ? '' : `$${parseFloat(row.amount.replace(/[^0-9.-]+/g,"")).toFixed(2)}`}
+                                    </td>
+                                    <td style={{ border: '1px solid #d1d5db', padding: '8px 12px', color: '#374151', verticalAlign: 'top' }}>{row.eodStatus}</td>
+                                 </tr>
+                              ))}
+                              {todaysProcessedRecords.length === 0 && (
+                                  <tr>
+                                      <td colSpan={6} style={{ border: '1px solid #d1d5db', padding: '20px', textAlign: 'center', color: '#6b7280' }}>No activity recorded for today.</td>
+                                  </tr>
+                              )}
                            </tbody>
                         </table>
                     </div>
