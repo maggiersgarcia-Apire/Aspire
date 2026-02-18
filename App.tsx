@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   RefreshCw, AlertCircle, Send, LayoutDashboard, CheckCircle, 
   UserCheck, Edit2, X, Check, CloudUpload, Copy, CreditCard, 
-  ClipboardList, Trash2, Database, Search, Download, User, Users, Save, HelpCircle
+  ClipboardList, Trash2, Database, Search, Download, User, Users, Save, HelpCircle,
+  ArrowRightLeft, ChevronRight
 } from 'lucide-react';
 import { supabase } from './services/supabaseClient';
 import { analyzeReimbursement } from './services/geminiService';
@@ -459,6 +460,11 @@ ${results.phase1}
     // setNabReference(''); // Removed simple state reset
   };
 
+  const handleStartNewAudit = () => {
+      resetAll();
+      fetchHistory();
+  };
+
   const handleCopyEmail = async () => {
     if (!results?.phase4) return;
     if (isEditing) {
@@ -595,6 +601,7 @@ ${results.phase1}
       if (error) throw error;
 
       setSaveStatus('success');
+      fetchHistory();
       
     } catch (error) {
       console.error("Supabase Save Error:", error);
@@ -612,6 +619,13 @@ ${results.phase1}
       
       handleSaveToCloud(finalContent);
       setShowSaveModal(false);
+  };
+
+  const handleSmartSave = () => {
+    const hasTransactions = parsedTransactions.length > 0;
+    const allHaveRef = parsedTransactions.every(tx => !!tx.currentNabRef && tx.currentNabRef.trim() !== '' && tx.currentNabRef !== 'PENDING');
+    const status = (hasTransactions && allHaveRef) ? 'PAID' : 'PENDING';
+    confirmSave(status);
   };
 
   const handleProcess = async () => {
@@ -716,7 +730,8 @@ ${results.phase1}
       return records.map(r => {
           const content = r.full_email_content || "";
           
-          const nabRefMatch = content.match(/\*\*NAB Reference:?\*\*?\s*(.*?)(?:\n|$)/i);
+          // IMPROVED REGEX: Captures "NAB Code" OR "NAB Reference"
+          const nabRefMatch = content.match(/\*\*NAB (?:Code|Reference):?\*\*?\s*(.*?)(?:\n|$)/i);
           const clientMatch = content.match(/\*\*Client \/ Location:\*\*\s*(.*?)(?:\n|$)/i);
 
           // Identify Status based on content content OR manual tags
@@ -733,7 +748,23 @@ ${results.phase1}
           }
           
           const clientName = clientMatch ? clientMatch[1].trim() : 'N/A';
-          const nabRef = nabRefMatch ? nabRefMatch[1].trim() : (isDiscrepancy ? 'N/A' : 'PENDING');
+          
+          // IMPROVED NAB REF LOGIC: 
+          // 1. Check Database Column 'nab_code' first.
+          // 2. If valid and not a system generated DISC code, use it.
+          // 3. Fallback to Regex extraction.
+          let nabRef = r.nab_code;
+          
+          // Check if DB value is a placeholder or system ID
+          if (!nabRef || nabRef === 'PENDING' || (typeof nabRef === 'string' && (nabRef.startsWith('DISC-') || nabRef.startsWith('BATCH-')))) {
+              // Try regex if DB code is not useful
+              if (nabRefMatch) nabRef = nabRefMatch[1].trim();
+          }
+
+          // Final fallback for display
+          if (!nabRef || nabRef === 'PENDING' || (typeof nabRef === 'string' && nabRef.startsWith('DISC-'))) {
+              nabRef = isDiscrepancy ? 'N/A' : 'PENDING';
+          }
 
           // EXTRACT DISCREPANCY REASON (EOD)
           let discrepancyReason = '';
@@ -758,8 +789,8 @@ ${results.phase1}
               created_at: r.created_at, // Ensure created_at is passed through
               id: r.id, // Ensure ID is passed through
               staff_name: r.staff_name || 'Unknown',
-              // Sanitize amount immediately upon processing for all views
-              amount: (r.amount || '0.00').replace('(Based on Receipts/Form Audit)', '').trim(),
+              // Sanitize amount immediately upon processing for all views. Added replace for asterisks.
+              amount: (r.amount || '0.00').replace('(Based on Receipts/Form Audit)', '').replace(/\*/g, '').trim(),
               // Helper for Today check
               isToday: new Date(r.created_at).toDateString() === new Date().toDateString()
           };
@@ -799,14 +830,16 @@ ${results.phase1}
          
          // Status Logic (Same as before)
          let status = '';
+         const numericAmount = parseFloat(record.amount.replace(/[^0-9.-]+/g,""));
+
          if (record.isDiscrepancy) {
-             status = `🔴 ${record.discrepancyReason}`; 
+             const reason = record.discrepancyReason.replace('Mismatch: ', '');
+             status = `Rematch (${reason})`; 
          } else {
-             const numericAmount = parseFloat(record.amount.replace(/[^0-9.-]+/g,""));
              if (numericAmount > 300) {
-                 status = `⚠️ PAID (High Value) ${record.amount} ${record.staff_name} ${record.nabRef} | FINDING: Amount > $300`;
+                 status = `For Julian approval (Amount > $300)`;
              } else {
-                 status = `🟩 PAID TO NAB ${record.amount} ${record.staff_name} ${record.nabRef}`;
+                 status = `Paid to Nab`;
              }
          }
 
@@ -875,8 +908,8 @@ ${results.phase1}
   // This pending count in header usually refers to today's pending items found
   const pendingCountToday = todaysProcessedRecords.filter(r => r.isDiscrepancy).length;
 
-  // NAB Log (Today)
-  const nabReportData: any[] = todaysProcessedRecords.filter(r => !r.isDiscrepancy);
+  // NAB Log (Today) - Modified filter to exclude PENDING nabRef
+  const nabReportData: any[] = todaysProcessedRecords.filter(r => !r.isDiscrepancy && r.nabRef !== 'PENDING' && r.nabRef !== '');
   const totalAmount = nabReportData.reduce((sum, r) => sum + parseFloat(r.amount.replace(/[^0-9.-]+/g,"")), 0);
   
   // Helper to determine what text to show on Save Button
@@ -1179,7 +1212,7 @@ ${results.phase1}
                                 </>
                             )}
                             <button 
-                                onClick={() => setShowSaveModal(true)} 
+                                onClick={saveStatus === 'success' ? handleStartNewAudit : handleSmartSave} 
                                 disabled={isSaving || isEditing} 
                                 className={`flex items-center gap-2 text-[10px] px-3 py-1.5 rounded-full uppercase tracking-wider font-bold shadow-lg transition-all duration-200 ${saveStatus === 'success' ? 'bg-emerald-500 text-white shadow-emerald-500/20 hover:bg-emerald-600' : saveStatus === 'error' || saveStatus === 'duplicate' ? 'bg-red-500 text-white shadow-red-500/20' : isEditing ? 'bg-slate-700/50 text-slate-500 cursor-not-allowed' : 'bg-slate-700 text-white hover:bg-slate-600 shadow-slate-900/20'}`}
                             >
@@ -1288,161 +1321,70 @@ ${results.phase1}
                 <div className="p-8 overflow-x-auto">
                     {/* THIS TABLE IS DESIGNED TO BE COPIED TO OUTLOOK - INLINE STYLES ARE CRITICAL */}
                     <div className="bg-white rounded-lg p-1 overflow-hidden">
-                        <table id="nab-log-table" style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'Arial, sans-serif', fontSize: '13px', backgroundColor: '#ffffff' }}>
+                        <table id="nab-log-table" style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'Arial, sans-serif', fontSize: '14px', backgroundColor: '#ffffff', color: '#333' }}>
                            <thead>
-                              <tr style={{ backgroundColor: '#f3f4f6' }}>
-                                 <th style={{ border: '1px solid #d1d5db', padding: '8px 12px', textAlign: 'left', fontWeight: 'bold', color: '#111827', width: '15%' }}>Date</th>
-                                 <th style={{ border: '1px solid #d1d5db', padding: '8px 12px', textAlign: 'left', fontWeight: 'bold', color: '#111827' }}>STAFF MEMBER</th>
-                                 <th style={{ border: '1px solid #d1d5db', padding: '8px 12px', textAlign: 'left', fontWeight: 'bold', color: '#111827' }}>Nab Details</th>
-                                 <th style={{ border: '1px solid #d1d5db', padding: '8px 12px', textAlign: 'right', fontWeight: 'bold', color: '#111827', width: '15%' }}>Amount</th>
+                              <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
+                                 <th style={{ padding: '16px', textAlign: 'left', fontWeight: 'bold', color: '#111827', width: '100px' }}>Date</th>
+                                 <th style={{ padding: '16px', textAlign: 'left', fontWeight: 'bold', color: '#111827' }}>Staff Member</th>
+                                 <th style={{ padding: '16px', textAlign: 'left', fontWeight: 'bold', color: '#111827', width: '150px' }}>Category</th>
+                                 <th style={{ padding: '16px', textAlign: 'right', fontWeight: 'bold', color: '#111827', width: '120px' }}>Amount</th>
+                                 <th style={{ padding: '16px', width: '40px' }}></th>
                               </tr>
                            </thead>
                            <tbody>
                               {nabReportData.map((row, idx) => (
-                                 <tr key={idx} style={{ backgroundColor: '#ffffff' }}>
-                                    <td style={{ border: '1px solid #d1d5db', padding: '8px 12px', color: '#374151', verticalAlign: 'top' }}>{row.date}</td>
-                                    {/* UPPERCASE STAFF NAME ENFORCED */}
-                                    <td style={{ border: '1px solid #d1d5db', padding: '8px 12px', color: '#374151', verticalAlign: 'top', textTransform: 'uppercase' }}>{row.staff_name.toUpperCase()}</td>
-                                    <td style={{ border: '1px solid #d1d5db', padding: '8px 12px', color: '#374151', verticalAlign: 'top' }}>{row.nabRef}</td>
-                                    <td style={{ border: '1px solid #d1d5db', padding: '8px 12px', color: '#374151', textAlign: 'right', verticalAlign: 'top' }}>{row.amount}</td>
+                                 <tr key={idx} style={{ borderBottom: '1px solid #e5e7eb', backgroundColor: '#ffffff' }}>
+                                    <td style={{ padding: '16px', color: '#374151', verticalAlign: 'middle' }}>{row.date}</td>
+                                    
+                                    <td style={{ padding: '16px', verticalAlign: 'middle' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                            <div style={{ width: '32px', height: '32px', borderRadius: '50%', backgroundColor: '#fef2f2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                {/* INLINE SVG FOR ARROW RIGHT LEFT (RED) since styles are inline for copy */}
+                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                    <path d="M8 3 4 7l4 4"/>
+                                                    <path d="M4 7h16"/>
+                                                    <path d="m16 21 4-4-4-4"/>
+                                                    <path d="M20 17H4"/>
+                                                </svg>
+                                            </div>
+                                            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                                <span style={{ fontWeight: 'bold', textTransform: 'uppercase', color: '#1f2937', fontSize: '13px' }}>{row.staff_name}</span>
+                                                <span style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px' }}>{row.nabRef}</span>
+                                            </div>
+                                        </div>
+                                    </td>
+
+                                    <td style={{ padding: '16px', verticalAlign: 'middle' }}>
+                                        <span style={{ backgroundColor: '#f3f4f6', padding: '4px 12px', borderRadius: '9999px', fontSize: '12px', fontWeight: '500', color: '#374151', display: 'inline-block' }}>
+                                            Transfers out
+                                        </span>
+                                    </td>
+
+                                    <td style={{ padding: '16px', textAlign: 'right', verticalAlign: 'middle', fontWeight: 'bold', color: '#111827' }}>
+                                        ${Math.abs(parseFloat(row.amount.replace(/[^0-9.-]+/g,""))).toFixed(2)}
+                                    </td>
+
+                                    <td style={{ padding: '16px', textAlign: 'center', verticalAlign: 'middle' }}>
+                                        {/* INLINE SVG CHEVRON */}
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="m9 18 6-6-6-6"/>
+                                        </svg>
+                                    </td>
                                  </tr>
                               ))}
                               {nabReportData.length === 0 && (
                                   <tr>
-                                      <td colSpan={4} style={{ border: '1px solid #d1d5db', padding: '20px', textAlign: 'center', color: '#6b7280' }}>No banking records found for today.</td>
+                                      <td colSpan={5} style={{ padding: '32px', textAlign: 'center', color: '#6b7280', fontStyle: 'italic' }}>No banking records found for today.</td>
                                   </tr>
                               )}
                               {/* Total Row */}
-                              <tr style={{ backgroundColor: '#f9fafb', fontWeight: 'bold' }}>
-                                  <td colSpan={3} style={{ border: '1px solid #d1d5db', padding: '8px 12px', textAlign: 'right', color: '#111827' }}>Total:</td>
-                                  <td style={{ border: '1px solid #d1d5db', padding: '8px 12px', textAlign: 'right', color: '#111827' }}>${totalAmount.toFixed(2)}</td>
+                              <tr style={{ backgroundColor: '#f9fafb' }}>
+                                  <td colSpan={3} style={{ padding: '16px', textAlign: 'right', color: '#111827', fontWeight: 'bold' }}>Total Processed:</td>
+                                  <td style={{ padding: '16px', textAlign: 'right', color: '#111827', fontWeight: 'bold', fontSize: '15px' }}>${totalAmount.toFixed(2)}</td>
+                                  <td></td>
                               </tr>
                            </tbody>
                         </table>
-                    </div>
-                </div>
-             </div>
-          )}
-
-          {/* ... existing views ... */}
-          {activeTab === 'eod' && (
-             <div className="bg-[#1c1e24]/80 backdrop-blur-md rounded-[32px] border border-white/5 shadow-xl overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
-                {/* ... content of EOD view ... */}
-                <div className="px-8 py-6 border-b border-white/5 flex items-center justify-between">
-                   <div className="flex items-center gap-3">
-                      <ClipboardList className="text-indigo-400" />
-                      <h2 className="text-xl font-semibold text-white">Daily Activity Tracker (EOD)</h2>
-                   </div>
-                   <div className="flex items-center gap-2">
-                       <button onClick={() => handleCopyTable('eod-report-table', 'eod')} className={`px-4 py-2 rounded-full font-medium text-sm transition-all flex items-center gap-2 ${reportCopied === 'eod' ? 'bg-indigo-500 text-white' : 'bg-white/10 hover:bg-white/20 text-white'}`}>
-                          {reportCopied === 'eod' ? <Check size={16} /> : <Copy size={16} />}
-                          {reportCopied === 'eod' ? 'Copied Report!' : 'Copy for Outlook'}
-                       </button>
-                       <button onClick={fetchHistory} className="p-2 bg-white/5 rounded-full hover:bg-white/10 transition-colors text-slate-400 hover:text-white">
-                          <RefreshCw size={18} className={loadingHistory ? 'animate-spin' : ''} />
-                       </button>
-                   </div>
-                </div>
-
-                <div className="p-8 overflow-x-auto">
-                    {/* HEADER SUMMARY SECTION */}
-                    <div className="flex gap-4 mb-4 text-slate-400 font-mono text-sm">
-                        <div className="bg-white/5 px-4 py-2 rounded border border-white/10">Date: <span className="text-white">{new Date().toDateString()}</span></div>
-                        <div className="bg-white/5 px-4 py-2 rounded border border-white/10">TOTAL - Reimbursement: <span className="text-emerald-400 font-bold">{reimbursementCount}</span> | Pending: <span className="text-red-400 font-bold">{pendingCountToday}</span></div>
-                    </div>
-
-                    {/* THIS TABLE IS DESIGNED TO BE COPIED TO OUTLOOK - INLINE STYLES ARE CRITICAL */}
-                    <div className="bg-white rounded-lg p-1 overflow-hidden">
-                        <table id="eod-report-table" style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'Arial, sans-serif', fontSize: '11px', backgroundColor: '#ffffff' }}>
-                           <thead>
-                              <tr style={{ backgroundColor: '#f3f4f6' }}>
-                                 <th style={{ border: '1px solid #d1d5db', padding: '6px', textAlign: 'left', fontWeight: 'bold', color: '#111827' }}>TIME IN</th>
-                                 <th style={{ border: '1px solid #d1d5db', padding: '6px', textAlign: 'left', fontWeight: 'bold', color: '#111827' }}>TIME OUT</th>
-                                 <th style={{ border: '1px solid #d1d5db', padding: '6px', textAlign: 'left', fontWeight: 'bold', color: '#111827' }}>ACTIVITY</th>
-                                 <th style={{ border: '1px solid #d1d5db', padding: '6px', textAlign: 'left', fontWeight: 'bold', color: '#111827' }}>NAME OF YP</th>
-                                 <th style={{ border: '1px solid #d1d5db', padding: '6px', textAlign: 'left', fontWeight: 'bold', color: '#111827' }}>NAME OF EMPLOYEE</th>
-                                 <th style={{ border: '1px solid #d1d5db', padding: '6px', textAlign: 'right', fontWeight: 'bold', color: '#111827' }}>AMOUNT</th>
-                                 <th style={{ border: '1px solid #d1d5db', padding: '6px', textAlign: 'center', fontWeight: 'bold', color: '#111827' }}>Date Received Email</th>
-                                 <th style={{ border: '1px solid #d1d5db', padding: '6px', textAlign: 'left', fontWeight: 'bold', color: '#111827' }}>COMMENTS/STATUS</th>
-                              </tr>
-                           </thead>
-                           <tbody>
-                              {eodData.map((row, idx) => (
-                                 <tr key={idx} style={{ backgroundColor: '#ffffff' }}>
-                                    <td style={{ border: '1px solid #d1d5db', padding: '6px', color: '#374151', verticalAlign: 'middle', whiteSpace: 'nowrap' }}>{row.eodTimeStart}</td>
-                                    <td style={{ border: '1px solid #d1d5db', padding: '6px', color: '#374151', verticalAlign: 'middle', whiteSpace: 'nowrap' }}>{row.eodTimeEnd}</td>
-                                    <td style={{ border: '1px solid #d1d5db', padding: '6px', color: '#374151', verticalAlign: 'middle' }}>{row.eodActivity}</td>
-                                    <td style={{ border: '1px solid #d1d5db', padding: '6px', color: '#374151', verticalAlign: 'middle' }}>{row.clientName}</td>
-                                    <td style={{ border: '1px solid #d1d5db', padding: '6px', color: '#374151', verticalAlign: 'middle', textTransform: 'uppercase' }}>{row.staff_name ? row.staff_name.toUpperCase() : ''}</td>
-                                    <td style={{ border: '1px solid #d1d5db', padding: '6px', color: '#374151', textAlign: 'right', verticalAlign: 'middle' }}>{row.amount}</td>
-                                    <td style={{ border: '1px solid #d1d5db', padding: '6px', color: '#374151', textAlign: 'center', verticalAlign: 'middle' }}>{row.date}</td>
-                                    <td style={{ border: '1px solid #d1d5db', padding: '6px', color: '#374151', verticalAlign: 'middle', fontSize: '10px' }}>
-                                        {row.eodStatus}
-                                    </td>
-                                 </tr>
-                              ))}
-                              {eodData.length === 0 && (
-                                  <tr>
-                                      <td colSpan={8} style={{ border: '1px solid #d1d5db', padding: '20px', textAlign: 'center', color: '#6b7280' }}>No activity records found for today.</td>
-                                  </tr>
-                              )}
-                           </tbody>
-                        </table>
-                    </div>
-
-                    {/* OUTSTANDING PENDING SUMMARY TABLE (WITH DELETE) */}
-                    <div className="mt-8 bg-red-500/5 border border-red-500/20 rounded-xl overflow-hidden">
-                        <div className="px-6 py-4 border-b border-red-500/10 flex justify-between items-center bg-red-500/5">
-                            <h3 className="text-red-400 font-bold text-sm uppercase tracking-wider flex items-center gap-2">
-                                <AlertCircle size={16} />
-                                Outstanding Discrepancies (Follow-up Required)
-                            </h3>
-                            <span className="text-[10px] text-red-300 opacity-70">
-                                Manual deletion required after resolution.
-                            </span>
-                        </div>
-                        {pendingRecords.length === 0 ? (
-                            <div className="p-6 text-center text-slate-500 text-sm">
-                                No pending discrepancies found for today (or all cleared). Good job!
-                            </div>
-                        ) : (
-                            <table className="w-full text-left text-xs">
-                                <thead>
-                                    <tr className="border-b border-red-500/10 text-red-200">
-                                        <th className="px-6 py-3 font-medium">Time / Date</th>
-                                        <th className="px-6 py-3 font-medium">Staff Member</th>
-                                        <th className="px-6 py-3 font-medium">Client</th>
-                                        <th className="px-6 py-3 font-medium">Discrepancy Details</th>
-                                        <th className="px-6 py-3 font-medium text-right">Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-red-500/10">
-                                    {pendingRecords.map((record) => (
-                                        <tr key={record.id} className="hover:bg-red-500/5 transition-colors">
-                                            <td className="px-6 py-3 text-slate-400">
-                                                {record.isToday ? record.time : <span className="text-slate-500">{record.date} {record.time}</span>}
-                                            </td>
-                                            <td className="px-6 py-3 text-white font-medium uppercase">{record.staff_name}</td>
-                                            <td className="px-6 py-3 text-slate-300">{record.clientName}</td>
-                                            <td className="px-6 py-3 text-red-300">{record.discrepancyReason}</td>
-                                            <td className="px-6 py-3 text-right">
-                                                <button 
-                                                    type="button"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        handleDismissDiscrepancy(record.id);
-                                                    }}
-                                                    className="text-slate-500 hover:text-red-400 transition-colors p-2 rounded-full hover:bg-red-500/10 relative z-10 cursor-pointer"
-                                                    title="Resolve & Remove from List"
-                                                >
-                                                    <Trash2 size={16} />
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        )}
                     </div>
                 </div>
              </div>
@@ -1523,80 +1465,6 @@ ${results.phase1}
                         </table>
                     </div>
                   )}
-                </div>
-             </div>
-          )}
-
-          {/* ... existing settings view ... */}
-          {activeTab === 'settings' && (
-             <div className="max-w-6xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-12">
-                
-                {/* Profile Card */}
-                <div className="bg-[#1c1e24]/80 backdrop-blur-md rounded-[32px] border border-white/5 shadow-xl overflow-hidden">
-                   <div className="px-8 py-6 border-b border-white/5">
-                      <div className="flex items-center gap-3">
-                         <User className="text-blue-400" />
-                         <h2 className="text-xl font-semibold text-white">Auditor Profile</h2>
-                      </div>
-                   </div>
-                   <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
-                      <div className="space-y-4">
-                         <div className="flex flex-col gap-1">
-                            <label className="text-sm font-medium text-slate-400">Auditor Name</label>
-                            <input type="text" defaultValue="Aspire Admin" className="bg-black/20 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-indigo-500 transition-colors" />
-                         </div>
-                         <div className="flex flex-col gap-1">
-                            <label className="text-sm font-medium text-slate-400">Email Address</label>
-                            <input type="email" defaultValue="admin@aspirehomes.com.au" className="bg-black/20 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-indigo-500 transition-colors" />
-                         </div>
-                      </div>
-                      <div className="space-y-4">
-                         <div className="flex flex-col gap-1">
-                            <label className="text-sm font-medium text-slate-400">Role</label>
-                            <div className="bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-slate-400 cursor-not-allowed">Senior Auditor</div>
-                         </div>
-                         <div className="flex flex-col gap-1">
-                             <label className="text-sm font-medium text-slate-400">Last Login</label>
-                             <div className="bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-slate-400 cursor-not-allowed">Today, 9:41 AM</div>
-                         </div>
-                      </div>
-                   </div>
-                </div>
-
-                {/* Employee Database Card */}
-                <div className="bg-[#1c1e24]/80 backdrop-blur-md rounded-[32px] border border-white/5 shadow-xl overflow-hidden">
-                    <div className="px-8 py-6 border-b border-white/5 flex items-center justify-between">
-                       <div className="flex items-center gap-3">
-                          <Users className="text-emerald-400" />
-                          <h2 className="text-xl font-semibold text-white">Employee Master List</h2>
-                       </div>
-                       <button onClick={handleSaveEmployeeList} disabled={saveEmployeeStatus === 'saved'} className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold text-sm transition-all ${saveEmployeeStatus === 'saved' ? 'bg-emerald-500 text-white cursor-default' : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg'}`}>
-                           {saveEmployeeStatus === 'saved' ? <Check size={16} /> : <Save size={16} />}
-                           {saveEmployeeStatus === 'saved' ? 'Database Updated' : 'Save & Update'}
-                       </button>
-                    </div>
-                    <div className="p-8">
-                       <div className="flex items-start gap-3 mb-6 bg-indigo-500/10 border border-indigo-500/20 p-4 rounded-xl">
-                          <AlertCircle size={20} className="text-indigo-400 mt-1 flex-shrink-0" />
-                          <div className="text-sm text-indigo-100">
-                             <p className="font-bold mb-1">Mass Update Instructions</p>
-                             <p className="opacity-80">Copy the data from your Excel file (including headers) and paste it into the box below. This list is used to auto-correct staff names during the audit process.</p>
-                             <p className="opacity-60 text-xs mt-2 font-mono">Format: First Name | Surname | Concatenate | BSB | Account</p>
-                          </div>
-                       </div>
-                       <div className="flex flex-col gap-2">
-                          <div className="flex justify-between items-end">
-                              <label className="text-sm font-medium text-slate-400">Employee Data (TSV/CSV)</label>
-                              <span className="text-xs text-slate-500 bg-white/5 px-2 py-1 rounded">Loaded Records: <span className="text-emerald-400 font-bold">{employeeList.length}</span></span>
-                          </div>
-                          <textarea 
-                             value={employeeRawText}
-                             onChange={(e) => setEmployeeRawText(e.target.value)}
-                             className="w-full h-[500px] bg-black/20 border border-white/10 rounded-xl p-4 font-mono text-xs text-slate-300 focus:outline-none focus:border-emerald-500/50 resize-y"
-                             placeholder="Paste Excel data here..."
-                          />
-                       </div>
-                    </div>
                 </div>
              </div>
           )}
