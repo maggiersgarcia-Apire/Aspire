@@ -35,7 +35,8 @@ const NabTab: React.FC<NabTabProps> = ({
             ${paidTx.map(tx => {
                 const dateStr = new Date(tx.rawDate).toLocaleDateString('en-US');
                 const staff = (tx.staffName || '').replace(/\*/g, '').trim();
-                const amount = (String(tx.amount) || '').replace(/\*/g, '').trim();
+                // Fix: Remove existing $ before adding it in template
+                const amount = (String(tx.amount) || '').replace(/\*/g, '').replace('$', '').trim();
                 const uid = (tx.uid || '').replace(/\*/g, '').trim();
 
                 return `
@@ -47,6 +48,10 @@ const NabTab: React.FC<NabTabProps> = ({
                   </tr>
                 `;
             }).join('')}
+            <tr>
+               <td colspan="3" style="border: 1px solid #000000; padding: 4px 8px; font-weight: bold; text-align: right; background-color: #f0fdf4;">Total Processed:</td>
+               <td style="border: 1px solid #000000; padding: 4px 8px; font-weight: bold; text-align: right; background-color: #f0fdf4;">$${paidTotal.toFixed(2)}</td>
+            </tr>
           </tbody>
         </table>
       `;
@@ -120,7 +125,8 @@ const NabTab: React.FC<NabTabProps> = ({
                              </div>
                           </div>
                        </div>
-                       <p className="text-emerald-400 font-mono font-bold">${tx.amount}</p>
+                       {/* Fix: Clean amount string before displaying to avoid double $ */}
+                       <p className="text-emerald-400 font-mono font-bold">${String(tx.amount).replace('$','')}</p>
                     </div>
                  ))}
               </div>
@@ -170,7 +176,8 @@ const NabTab: React.FC<NabTabProps> = ({
 
                        {/* Amount & Action */}
                        <div className="col-span-2 flex items-center justify-end gap-4">
-                          <span className="text-sm text-white">${tx.amount}</span>
+                          {/* Fix: Clean amount string before displaying to avoid double $ */}
+                          <span className="text-sm text-white">${String(tx.amount).replace('$','')}</span>
                           <ChevronRight size={16} className="text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity" />
                        </div>
                     </div>
