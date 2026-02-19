@@ -102,8 +102,13 @@ Compare [Total Amount from Phase 2] (Form) vs. [Total Amount from Phase 1] (Rece
 * **Exceptions:** Trigger a "Discrepancy" (Email Type A) if the receipts are missing, illegible, significantly unrelated, OR if the Receipt Amount is less than the Form Amount (Scenario B).
 
 RULE 2: Duplicate Check
-Check if this receipt details (Store, Date, Amount) have been processed before in this session.
-IF DUPLICATE: Flag immediately.
+**Context:** You are provided with a "Transaction History" list containing [Date, Amount, Store, NAB Code].
+**Logic:** Check if the specific receipt details (Store Name, Date, and Amount) match any entry in the provided History OR if multiple receipts in the current upload are identical.
+**Action:** 
+*   If a duplicate is detected (either internal to this upload or found in history):
+    1.  Flag immediately as a **Discrepancy (Email Type A)**.
+    2.  **CRITICAL:** You **MUST** include the **NAB Code** (or Reference ID) of the *original/previous* transaction so the user can locate it in their email.
+    3.  Output Text: "This receipt appears to be a duplicate of a previously processed transaction. Reference: [NAB CODE]"
 
 RULE 3: All Good
 If Matches Exactly OR if Resolved via Rule 1 (Scenario A).
@@ -116,14 +121,15 @@ Output ONLY the correct Email based on the audit result.
 
 **EMAIL TYPE A: DISCREPANCY (Critical Issues Only)**
 *Instructions:*
-1. Use this only if receipts are missing, illegible, fundamental data is wrong, OR Form Amount > Receipt Amount.
+1. Use this only if receipts are missing, illegible, fundamental data is wrong, Form Amount > Receipt Amount, or **DUPLICATE DETECTED**.
 2. State clearly that a discrepancy was found.
 3. Show the "Amount on Form" vs "Amount on Receipt".
 4. **CRITICAL:** Include the **Detailed Itemization Table** from Phase 1 so the claimant sees exactly what items were detected.
 5. Include **Client / Location** so we can track who this is for.
 6. Ask them to resubmit.
-7. **DO NOT** include a sign-off or signature.
-8. **DO NOT** include a Subject line.
+7. **If Duplicate:** Explicitly state the Reference/NAB Code of the original transaction.
+8. **DO NOT** include a sign-off or signature.
+9. **DO NOT** include a Subject line.
 
 **Template:**
 Hi [First Name],
@@ -137,7 +143,7 @@ I am writing to inform you that a discrepancy was found during the audit of your
 **Amount on Form:** $[Amount from Form]
 **Actual Receipt Total:** $[Amount from Receipt]
 
-[Explain the specific critical issue. E.g., "The receipt total is less than the requested amount on the form."]
+[Explain the specific critical issue. E.g., "The receipt total is less than the requested amount on the form." OR "This receipt matches a previously processed transaction (Ref: XXXXX)."]
 
 Here is the full breakdown of the items analyzed from your receipts:
 
@@ -317,7 +323,8 @@ const processDocx = async (file: FileData): Promise<{ text: string, images: File
 
 export const analyzeReimbursement = async (
   receiptImages: FileData[],
-  formImage: FileData | null
+  formImage: FileData | null,
+  historyContext: string = ""
 ) => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
@@ -398,6 +405,13 @@ export const analyzeReimbursement = async (
      parts.push({ text: "[NOTE: Documents were provided but no direct images were found. Please analyze the extracted text above.]" });
   } else {
     parts.push({ text: "[NO RECEIPT IMAGES PROVIDED]" });
+  }
+
+  // Add History Context if provided
+  if (historyContext) {
+      parts.push({ 
+          text: `*** SYSTEM CONTEXT: TRANSACTION HISTORY ***\nUse this list to perform RULE 2 (Duplicate Check). If you find a match (Same Amount, Date, Store), flag it and provide the NAB Code.\n\n${historyContext}` 
+      });
   }
 
   try {

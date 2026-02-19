@@ -22,9 +22,19 @@ const EodTab: React.FC<EodTabProps> = ({
   // 2. Sequential entries with 1 min gap
   // 3. Random duration 10-15 mins for Reimbursement
   // 4. Final IDLE entry ends at 15:00
+  // 5. System is "Per NAB Code" - Deduplicate rows by Transaction/Internal ID to show Form Totals, not Line Items.
   const schedule = useMemo(() => {
+    // Deduplicate rows based on internalId to ensure we list Transactions (Forms), not individual receipt items.
+    const uniqueMap = new Map();
+    rows.forEach(row => {
+        if (!uniqueMap.has(row.internalId)) {
+            uniqueMap.set(row.internalId, row);
+        }
+    });
+    const uniqueRows = Array.from(uniqueMap.values());
+
     // Sort rows by timestamp to ensure consistent order
-    const sorted = [...rows].sort((a, b) => new Date(a.rawDate).getTime() - new Date(b.rawDate).getTime());
+    const sorted = uniqueRows.sort((a, b) => new Date(a.rawDate).getTime() - new Date(b.rawDate).getTime());
     
     // Initialize Start Time: 07:00:00
     let currentCursor = new Date(date);
@@ -49,13 +59,18 @@ const EodTab: React.FC<EodTabProps> = ({
         const isPending = !row.nabCode || row.nabCode === 'PENDING' || row.nabCode === 'N/A';
         const status = isPending ? 'Dashboard Rule Mismatch' : `Paid to Nab [${row.nabCode}]`;
 
+        // Use totalAmount (Form Amount) instead of individual line item amount
+        // Handle potential string/number types safely
+        let displayAmount = row.totalAmount;
+        if (displayAmount === undefined || displayAmount === null) displayAmount = row.amount;
+
         return {
             timeIn: timeIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
             timeOut: timeOut.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
             activity: 'REIMBURSEMENT',
             yp: row.ypName || 'N/A',
             staff: row.staffName,
-            amount: row.amount,
+            amount: displayAmount, 
             status: status,
             isIdle: false
         };
@@ -107,7 +122,7 @@ const EodTab: React.FC<EodTabProps> = ({
                 <td style="border: 1px solid #000000; padding: 4px 8px;">${item.activity}</td>
                 <td style="border: 1px solid #000000; padding: 4px 8px;">${item.yp}</td>
                 <td style="border: 1px solid #000000; padding: 4px 8px; text-transform: uppercase;">${item.staff}</td>
-                <td style="border: 1px solid #000000; padding: 4px 8px;">${item.amount ? '$' + item.amount.replace('$','') : ''}</td>
+                <td style="border: 1px solid #000000; padding: 4px 8px;">${item.amount ? '$' + String(item.amount).replace('$','') : ''}</td>
                 <td style="border: 1px solid #000000; padding: 4px 8px;">${item.status}</td>
               </tr>
             `).join('')}
@@ -145,11 +160,11 @@ const EodTab: React.FC<EodTabProps> = ({
            <div className="flex gap-6 text-[10px] font-bold tracking-widest uppercase">
               <div className="flex flex-col items-end">
                  <span className="text-slate-500">Processed</span>
-                 <span className="text-emerald-400 text-sm">{count}</span>
+                 <span className="text-emerald-400 text-sm">{schedule.filter(i => !i.isIdle).length}</span>
               </div>
               <div className="flex flex-col items-end">
                  <span className="text-slate-500">Pending</span>
-                 <span className="text-red-400 text-sm">0</span>
+                 <span className="text-red-400 text-sm">{schedule.filter(i => !i.isIdle && i.status.includes('Mismatch')).length}</span>
               </div>
            </div>
 
@@ -207,7 +222,7 @@ const EodTab: React.FC<EodTabProps> = ({
                            </div>
                            <div className="col-span-2 text-sm text-slate-300 truncate" title={item.yp}>{item.yp}</div>
                            <div className="col-span-2 text-sm text-slate-200 uppercase truncate" title={item.staff}>{item.staff}</div>
-                           <div className="col-span-1 text-sm text-emerald-400 font-mono text-right">{item.amount ? `$${item.amount.replace('$','')}` : ''}</div>
+                           <div className="col-span-1 text-sm text-emerald-400 font-mono text-right">{item.amount ? `$${String(item.amount).replace('$','')}` : ''}</div>
                            <div className={`col-span-3 text-sm truncate pl-4 ${isMismatch ? 'text-red-400' : 'text-slate-500'}`}>
                                {item.status}
                            </div>

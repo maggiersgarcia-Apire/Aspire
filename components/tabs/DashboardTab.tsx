@@ -1,7 +1,6 @@
-import React from 'react';
-import { RefreshCw, LayoutDashboard, AlertCircle, Send, CheckCircle, Edit2, X, Check, CloudUpload, Copy, CreditCard, Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { RefreshCw, LayoutDashboard, AlertCircle, Send, CheckCircle, Edit2, X, Check, CloudUpload, Copy, CreditCard, Loader2, AlertTriangle, Zap, Terminal } from 'lucide-react';
 import FileUpload from '../FileUpload';
-import ProcessingStep from '../ProcessingStep';
 import MarkdownRenderer from '../MarkdownRenderer';
 import { FileWithPreview, ProcessingResult, ProcessingState } from '../../types';
 
@@ -27,20 +26,149 @@ interface DashboardTabProps {
   handleStartNewAudit: () => void;
   parsedTransactions: any[];
   handleTransactionNabChange: (index: number, val: string) => void;
+  handleTransactionNameChange: (index: number, val: string) => void;
+  handleTransactionAmountChange: (index: number, val: string) => void;
   handleCopyField: (text: string, field: string) => void;
   copiedField: string | null;
   editableContent: string;
   setEditableContent: (content: string) => void;
 }
 
+// Sound Effect Hook
+const useTechySound = () => {
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  
+  const initAudio = () => {
+      if (!audioCtxRef.current) {
+          audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      if(audioCtxRef.current.state === 'suspended') {
+          audioCtxRef.current.resume();
+      }
+      return audioCtxRef.current;
+  };
+
+  const playTick = () => {
+    const ctx = initAudio();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    
+    // Techy Data Blip
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = 'square'; 
+    // Random high pitch frequency for "data computing" feel
+    osc.frequency.setValueAtTime(800 + Math.random() * 600, ctx.currentTime);
+    
+    // Very short duration
+    gain.gain.setValueAtTime(0.015, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.03);
+    
+    osc.start();
+    osc.stop(ctx.currentTime + 0.04);
+  };
+
+  const playSuccess = () => {
+    const ctx = initAudio();
+    const t = ctx.currentTime;
+    
+    // Chord for success (Cinematic Impact)
+    const playTone = (freq: number, type: OscillatorType, delay: number) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, t + delay);
+        osc.frequency.exponentialRampToValueAtTime(freq * 2, t + delay + 0.1); // Slide up
+        
+        gain.gain.setValueAtTime(0, t + delay);
+        gain.gain.linearRampToValueAtTime(0.1, t + delay + 0.05);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + delay + 1.5);
+        
+        osc.start(t + delay);
+        osc.stop(t + delay + 1.5);
+    };
+
+    playTone(220, 'sawtooth', 0); // A3
+    playTone(440, 'sine', 0.1);   // A4
+    playTone(554.37, 'square', 0.2); // C#5
+    playTone(880, 'sine', 0.2); // A5
+  };
+  
+  return { playTick, playSuccess };
+};
+
+const LOADING_PHASES = [
+  "INITIALIZING NEURAL NET...",
+  "SCANNING RECEIPT GEOMETRY...",
+  "EXTRACTING MERCHANT DATA...",
+  "PARSING DATE & TIME...",
+  "IDENTIFYING LINE ITEMS...",
+  "VALIDATING TOTALS...",
+  "CROSS-REFERENCING RULES...",
+  "DETECTING DISCREPANCIES...",
+  "GENERATING AUDIT REPORT...",
+  "FINALIZING..."
+];
+
 const DashboardTab: React.FC<DashboardTabProps> = ({
   receiptFiles, setReceiptFiles, formFiles, setFormFiles,
   processingState, results, errorMessage, onProcess, onReset,
   isEditing, setIsEditing, handleSaveEdit, handleCancelEdit, handleSmartSave,
   saveStatus, isSaving, handleCopyEmail, emailCopied, handleStartNewAudit,
-  parsedTransactions, handleTransactionNabChange, handleCopyField, copiedField,
-  editableContent, setEditableContent
+  parsedTransactions, handleTransactionNabChange, handleTransactionNameChange, handleTransactionAmountChange,
+  handleCopyField, copiedField, editableContent, setEditableContent
 }) => {
+
+  const [progress, setProgress] = useState(0);
+  const [loadingText, setLoadingText] = useState(LOADING_PHASES[0]);
+  const { playTick, playSuccess } = useTechySound();
+  const prevProcessingState = useRef(processingState);
+  const animationRef = useRef<number | null>(null);
+
+  // Handle Progress Simulation & Sound
+  useEffect(() => {
+    if (processingState === ProcessingState.PROCESSING) {
+        setProgress(0);
+        
+        if (animationRef.current) clearInterval(animationRef.current);
+
+        animationRef.current = window.setInterval(() => {
+            setProgress(prev => {
+                // Slower increment as it gets higher
+                const increment = Math.random() * (prev > 80 ? 0.5 : 2);
+                const next = prev + increment;
+                
+                // Update text based on progress percentage
+                const textIndex = Math.floor((next / 100) * LOADING_PHASES.length);
+                setLoadingText(LOADING_PHASES[Math.min(textIndex, LOADING_PHASES.length - 1)]);
+
+                // Trigger tick sound occasionally based on progress update
+                if (Math.random() > 0.6) playTick();
+
+                if (next >= 99) return 99; // Hold at 99% until complete
+                return next;
+            });
+        }, 100);
+    } else {
+        if (animationRef.current) clearInterval(animationRef.current);
+    }
+    
+    return () => {
+        if (animationRef.current) clearInterval(animationRef.current);
+    };
+  }, [processingState]);
+
+  // Handle Completion Sound
+  useEffect(() => {
+      if (prevProcessingState.current === ProcessingState.PROCESSING && results) {
+          setProgress(100);
+          playSuccess();
+      }
+      prevProcessingState.current = processingState;
+  }, [processingState, results]);
 
   const getSaveButtonText = () => {
     if (isSaving) {
@@ -54,8 +182,8 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
     if (saveStatus === 'success') {
       return (
         <>
-          <Check size={12} strokeWidth={3} />
-          <span>Saved</span>
+          <RefreshCw size={12} strokeWidth={3} />
+          <span>Start New Audit</span>
         </>
       );
     }
@@ -73,6 +201,22 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
         <span>Save to Database</span>
       </>
     );
+  };
+
+  const getAnalysisStatusIcon = (content: string) => {
+      const lower = content.toLowerCase();
+      if (
+          lower.includes('issue') || 
+          lower.includes('discrepancy') || 
+          lower.includes('missing') || 
+          lower.includes('error') || 
+          lower.includes('fail') || 
+          lower.includes('blur') ||
+          lower.includes('illegible')
+      ) {
+          return <AlertTriangle size={24} className="text-amber-400" />;
+      }
+      return <CheckCircle size={24} className="text-lime-400" />;
   };
 
   return (
@@ -138,15 +282,6 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
             </button>
           </div>
         </div>
-        <div className="bg-[#1c1e24]/60 backdrop-blur-md rounded-[32px] border border-white/5 shadow-lg p-6 relative">
-          <h3 className="text-xs font-bold text-slate-500 mb-6 uppercase tracking-widest pl-1">Process Status</h3>
-          <div className="space-y-6 pl-2">
-            <ProcessingStep status={processingState === ProcessingState.IDLE ? 'idle' : 'complete'} title="Upload" description="Receipts & Forms received" />
-            <ProcessingStep status={processingState === ProcessingState.PROCESSING ? 'processing' : results ? 'complete' : 'idle'} title="AI Extraction" description="Analyzing receipt data" />
-            <ProcessingStep status={processingState === ProcessingState.PROCESSING ? 'idle' : results ? 'complete' : 'idle'} title="Rule Engine" description="Validating policy limits" />
-            <ProcessingStep status={processingState === ProcessingState.PROCESSING ? 'idle' : results ? 'complete' : 'idle'} title="Final Decision" description="Email generation" />
-          </div>
-        </div>
       </div>
 
       <div className="flex-1 space-y-6 min-h-[600px]">
@@ -159,32 +294,69 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
             <p className="max-w-sm mx-auto text-slate-400">Upload documents on the left panel to begin the AI-powered auditing process.</p>
           </div>
         )}
+        
+        {/* TECHY LOADER */}
         {!results && processingState === ProcessingState.PROCESSING && (
-          <div className="h-full flex flex-col items-center justify-center bg-[#1c1e24]/30 border border-white/5 rounded-[32px] p-12 backdrop-blur-sm">
-            <div className="relative w-24 h-24 mb-8">
-              <div className="absolute inset-0 border-t-4 border-indigo-400 rounded-full animate-spin"></div>
-              <div className="absolute inset-2 border-r-4 border-blue-400 rounded-full animate-spin animation-delay-150"></div>
-              <div className="absolute inset-4 border-b-4 border-purple-400 rounded-full animate-spin animation-delay-300"></div>
+          <div className="h-full flex flex-col items-center justify-center bg-[#1c1e24]/40 border border-white/10 rounded-[32px] p-12 backdrop-blur-md relative overflow-hidden">
+            {/* Ambient Background Glow */}
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-indigo-500/10 rounded-full blur-[100px] animate-pulse"></div>
+            
+            <div className="relative z-10 flex flex-col items-center w-full max-w-md">
+              {/* Animated Percentage Text */}
+              <div className="text-6xl font-black text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-500 font-mono mb-8 tracking-tighter">
+                 {Math.round(progress)}%
+              </div>
+
+              {/* Progress Bar Container */}
+              <div className="w-full h-3 bg-black/50 rounded-full overflow-hidden border border-white/10 shadow-inner relative group">
+                {/* Running Light Bar */}
+                <div 
+                  className="h-full bg-gradient-to-r from-indigo-600 via-cyan-400 to-indigo-600 transition-all duration-100 ease-linear relative shadow-[0_0_20px_rgba(34,211,238,0.6)]"
+                  style={{ width: `${progress}%` }}
+                >
+                  {/* The "Head" of the light */}
+                  <div className="absolute top-0 right-0 bottom-0 w-2 bg-white blur-[2px] shadow-[0_0_10px_rgba(255,255,255,0.8)]"></div>
+                </div>
+              </div>
+
+              {/* Status Indicators below bar */}
+              <div className="mt-6 flex justify-between w-full text-[10px] font-mono text-cyan-400/70 uppercase tracking-widest">
+                  <div className="flex items-center gap-2">
+                     <span className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-ping"></span>
+                     PROCESSING
+                  </div>
+                  <div className="flex items-center gap-1">
+                     <Terminal size={10} />
+                     <span className="animate-pulse">{loadingText}</span>
+                  </div>
+              </div>
             </div>
-            <h2 className="text-xl font-bold text-white">Analyzing Documents...</h2>
-            <p className="text-slate-400 mt-2 animate-pulse">Running compliance checks</p>
           </div>
         )}
+
         {results && (
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 h-full content-start">
-            <div className="bg-[#1c1e24]/80 backdrop-blur-xl rounded-[32px] border border-white/5 overflow-hidden shadow-lg hover:border-white/10 transition-colors">
+            
+            {/* PHASE 1: RECEIPT ANALYSIS (Full Width since Standardization is hidden) */}
+            <div className="bg-[#1c1e24]/80 backdrop-blur-xl rounded-[32px] border border-white/5 overflow-hidden shadow-lg hover:border-white/10 transition-colors xl:col-span-2">
               <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between bg-white/5">
                 <div className="flex items-center gap-3">
                   <div className="w-2 h-8 bg-indigo-400 rounded-full shadow-[0_0_10px_rgba(129,140,248,0.5)]"></div>
                   <h3 className="font-semibold text-white text-lg">Receipt Analysis</h3>
                 </div>
-                <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-2 py-1 rounded-md border border-indigo-500/20 uppercase tracking-wider font-bold">Phase 1</span>
+                <div className="flex items-center gap-3">
+                    {getAnalysisStatusIcon(results.phase1)}
+                    <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-2 py-1 rounded-md border border-indigo-500/20 uppercase tracking-wider font-bold">Phase 1</span>
+                </div>
               </div>
               <div className="p-6 max-h-[400px] overflow-y-auto custom-scrollbar">
                 <MarkdownRenderer content={results.phase1} />
               </div>
             </div>
-            <div className="bg-[#1c1e24]/80 backdrop-blur-xl rounded-[32px] border border-white/5 overflow-hidden shadow-lg hover:border-white/10 transition-colors">
+
+            {/* HIDDEN PHASE 2: STANDARDIZATION */}
+            {/* 
+            <div className="hidden bg-[#1c1e24]/80 backdrop-blur-xl rounded-[32px] border border-white/5 overflow-hidden shadow-lg hover:border-white/10 transition-colors">
               <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between bg-white/5">
                 <div className="flex items-center gap-3">
                   <div className="w-2 h-8 bg-blue-400 rounded-full shadow-[0_0_10px_rgba(96,165,250,0.5)]"></div>
@@ -195,19 +367,24 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
               <div className="p-6 bg-[#111216] font-mono text-xs text-slate-300 overflow-x-auto">
                 <pre className="whitespace-pre-wrap">{results.phase2.replace(/```pgsql/g, '').replace(/```sql/g, '').replace(/```/g, '').trim()}</pre>
               </div>
-            </div>
+            </div> 
+            */}
+
+            {/* PHASE 3 (Now Phase 2): AUDIT RULES ENGINE */}
             <div className="bg-[#1c1e24]/80 backdrop-blur-xl rounded-[32px] border border-white/5 overflow-hidden shadow-lg hover:border-white/10 transition-colors xl:col-span-2">
               <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between bg-white/5">
                 <div className="flex items-center gap-3">
                   <div className="w-2 h-8 bg-purple-400 rounded-full shadow-[0_0_10px_rgba(192,132,252,0.5)]"></div>
                   <h3 className="font-semibold text-white text-lg">Audit Rules Engine</h3>
                 </div>
-                <span className="text-[10px] bg-purple-500/10 text-purple-400 px-2 py-1 rounded-md border border-purple-500/20 uppercase tracking-wider font-bold">Phase 3</span>
+                <span className="text-[10px] bg-purple-500/10 text-purple-400 px-2 py-1 rounded-md border border-purple-500/20 uppercase tracking-wider font-bold">Phase 2</span>
               </div>
               <div className="p-6">
                 <MarkdownRenderer content={results.phase3} />
               </div>
             </div>
+
+            {/* FINAL DECISION */}
             <div className="bg-indigo-500/5 backdrop-blur-xl rounded-[32px] border border-indigo-500/20 overflow-hidden shadow-[0_0_30px_rgba(0,0,0,0.3)] xl:col-span-2 relative">
               <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 blur-[80px] pointer-events-none"></div>
               <div className="px-6 py-4 border-b border-indigo-500/10 flex items-center justify-between bg-indigo-500/10">
@@ -260,8 +437,13 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
                       <div className="bg-black/30 rounded-xl p-3 border border-white/5 hover:border-white/10 transition-colors">
                         <p className="text-[10px] uppercase text-slate-400 font-bold mb-1">Payee Name</p>
                         <div className="flex justify-between items-center">
-                          <p className="text-white font-semibold truncate uppercase">{tx.formattedName}</p>
-                          <button onClick={() => handleCopyField(tx.formattedName, 'name')} className="text-indigo-400 hover:text-white transition-colors">
+                          <input 
+                              type="text" 
+                              value={tx.formattedName} 
+                              onChange={(e) => handleTransactionNameChange(idx, e.target.value)}
+                              className="bg-transparent border-b border-transparent hover:border-white/20 focus:border-indigo-500 focus:outline-none text-white font-semibold truncate uppercase w-full mr-2 transition-colors"
+                          />
+                          <button onClick={() => handleCopyField(tx.formattedName, 'name')} className="text-indigo-400 hover:text-white transition-colors flex-shrink-0">
                             {copiedField === 'name' ? <Check size={14} /> : <Copy size={14} />}
                           </button>
                         </div>
@@ -269,8 +451,16 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
                       <div className="bg-black/30 rounded-xl p-3 border border-white/5 hover:border-emerald-500/30 transition-colors">
                         <p className="text-[10px] uppercase text-slate-400 font-bold mb-1">Amount</p>
                         <div className="flex justify-between items-center">
-                          <p className="text-emerald-400 font-bold text-lg">{tx.amount.replace(/[^0-9.]/g, '')}</p>
-                          <button onClick={() => handleCopyField(tx.amount.replace(/[^0-9.]/g, ''), 'amount')} className="text-emerald-500 hover:text-white transition-colors">
+                          <div className="flex items-center text-emerald-400 font-bold text-lg w-full">
+                              <span className="mr-0.5">$</span>
+                              <input 
+                                  type="text" 
+                                  value={tx.amount.replace('$','')} 
+                                  onChange={(e) => handleTransactionAmountChange(idx, e.target.value)}
+                                  className="bg-transparent border-b border-transparent hover:border-emerald-500/20 focus:border-emerald-500 focus:outline-none w-full mr-2 transition-colors"
+                              />
+                          </div>
+                          <button onClick={() => handleCopyField(tx.amount.replace(/[^0-9.]/g, ''), 'amount')} className="text-emerald-500 hover:text-white transition-colors flex-shrink-0">
                             {copiedField === 'amount' ? <Check size={14} /> : <Copy size={14} />}
                           </button>
                         </div>
@@ -282,7 +472,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
 
               <div className="px-8 pt-6 pb-2">
                 <label className="block text-xs uppercase tracking-widest font-bold text-slate-500 mb-2">
-                  Step 5: Enter Bank/NAB Reference(s)
+                  NAB CODE here
                 </label>
                 <div className="space-y-3">
                   {parsedTransactions.length === 0 ? (

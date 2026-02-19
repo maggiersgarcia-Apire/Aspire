@@ -4,6 +4,7 @@ import { analyzeReimbursement } from './services/geminiService';
 import { fileToBase64 } from './utils/fileHelpers';
 import { FileWithPreview, ProcessingResult, ProcessingState } from './types';
 import { supabase } from './services/supabaseClient';
+import { Menu, X, LayoutDashboard, Database, CreditCard, ClipboardList, BarChart3, Settings } from 'lucide-react';
 
 // Tab Components
 import DashboardTab from './components/tabs/DashboardTab';
@@ -160,6 +161,16 @@ const generateOutlookHtml = (content: string) => {
     return html;
 };
 
+// --- NAVIGATION CONFIG ---
+const NAV_ITEMS = [
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'database', label: 'Database', icon: Database },
+  { id: 'nab_log', label: 'NAB', icon: CreditCard, extraClass: 'text-emerald-400 border-emerald-500/20 bg-emerald-500/20' },
+  { id: 'eod', label: 'EOD', icon: ClipboardList, extraClass: 'text-indigo-400 border-indigo-500/20 bg-indigo-500/20' },
+  { id: 'analytics', label: 'Analytics', icon: BarChart3, extraClass: 'text-blue-400 border-blue-500/20 bg-blue-500/20' },
+  { id: 'settings', label: 'Settings', icon: Settings }
+];
+
 // --- MAIN APPLICATION COMPONENT ---
 export const App = () => {
   const [receiptFiles, setReceiptFiles] = useState<FileWithPreview[]>([]);
@@ -204,6 +215,9 @@ export const App = () => {
   
   // Import State
   const [importing, setImporting] = useState(false);
+
+  // Mobile Menu State
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     // Splash screen timer
@@ -323,6 +337,104 @@ export const App = () => {
   };
 
   const parsedTransactions = getParsedTransactions();
+
+  // --- TRANSACTION EDIT HANDLERS ---
+  const handleTransactionNameChange = (index: number, newVal: string) => {
+      const content = isEditing ? editableContent : results?.phase4;
+      if (!content) return;
+
+      if (content.includes('| Staff Member |')) {
+           const lines = content.split('\n');
+          let txIndex = 0;
+          let isTable = false;
+          const newLines = lines.map(line => {
+             if (line.toLowerCase().includes('| staff member')) isTable = true;
+             
+             if (isTable && line.trim().startsWith('|') && !line.includes('Staff Member') && !line.includes('---')) {
+                 if (txIndex === index) {
+                     const cols = line.split('|');
+                     if (cols.length >= 2) {
+                         cols[1] = ` ${newVal} `;
+                         txIndex++;
+                         return cols.join('|');
+                     }
+                 }
+                 txIndex++;
+             }
+             return line;
+          });
+          const newContent = newLines.join('\n');
+          if (isEditing) setEditableContent(newContent);
+          else setResults({ ...results!, phase4: newContent });
+          return;
+      }
+
+      const marker = '**Staff Member:**';
+      const parts = content.split(marker);
+      const partIndex = index + 1;
+
+      if (parts.length <= partIndex) return;
+
+      let targetPart = parts[partIndex];
+      const lines = targetPart.split('\n');
+      lines[0] = ` ${newVal}`; // Update the name line
+      parts[partIndex] = lines.join('\n');
+      
+      const newContent = parts.join(marker);
+
+      if (isEditing) setEditableContent(newContent);
+      else setResults({ ...results!, phase4: newContent });
+  };
+
+  const handleTransactionAmountChange = (index: number, newVal: string) => {
+      const content = isEditing ? editableContent : results?.phase4;
+      if (!content) return;
+
+      if (content.includes('| Staff Member |')) {
+           const lines = content.split('\n');
+          let txIndex = 0;
+          let isTable = false;
+          const newLines = lines.map(line => {
+             if (line.toLowerCase().includes('| staff member')) isTable = true;
+             
+             if (isTable && line.trim().startsWith('|') && !line.includes('Staff Member') && !line.includes('---')) {
+                 if (txIndex === index) {
+                     const cols = line.split('|');
+                     if (cols.length >= 4) {
+                         cols[3] = ` $${newVal.replace('$','')} `; 
+                         txIndex++;
+                         return cols.join('|');
+                     }
+                 }
+                 txIndex++;
+             }
+             return line;
+          });
+          const newContent = newLines.join('\n');
+          if (isEditing) setEditableContent(newContent);
+          else setResults({ ...results!, phase4: newContent });
+          return;
+      }
+
+      const marker = '**Staff Member:**';
+      const parts = content.split(marker);
+      const partIndex = index + 1;
+
+      if (parts.length <= partIndex) return;
+
+      let targetPart = parts[partIndex];
+      if (targetPart.match(/\*\*Amount:\*\*/)) {
+          targetPart = targetPart.replace(/\*\*Amount:\*\*\s*.*/, `**Amount:** $${newVal.replace('$','')}`);
+      } else if (targetPart.match(/Amount:/)) {
+          targetPart = targetPart.replace(/Amount:\s*.*/, `Amount: $${newVal.replace('$','')}`);
+      }
+      
+      parts[partIndex] = targetPart;
+      const newContent = parts.join(marker);
+
+      if (isEditing) setEditableContent(newContent);
+      else setResults({ ...results!, phase4: newContent });
+  };
 
   const handleTransactionNabChange = (index: number, newVal: string) => {
       const content = isEditing ? editableContent : results?.phase4;
@@ -966,7 +1078,13 @@ export const App = () => {
         mimeType: formFiles[0].type || 'application/octet-stream', data: await fileToBase64(formFiles[0]), name: formFiles[0].name
       } : null;
 
-      const fullResponse = await analyzeReimbursement(receiptImages, formImage);
+      const historyContextString = historyData
+          .filter(r => r.amount && r.amount !== 0) // Basic filter
+          .slice(0, 200) // Context limit
+          .map(r => `Ref/NAB: ${r.nab_code || r.uid} | Date: ${r.receipt_date || r.date_processed?.split('T')[0]} | Amount: $${r.amount} | Store/Desc: ${r.product_name}`)
+          .join('\n');
+
+      const fullResponse = await analyzeReimbursement(receiptImages, formImage, historyContextString);
       const parseSection = (tagStart: string, tagEnd: string, text: string) => {
         const startIdx = text.indexOf(tagStart); const endIdx = text.indexOf(tagEnd);
         if (startIdx === -1 || endIdx === -1) return "Section not found or parsing error.";
@@ -1064,7 +1182,7 @@ export const App = () => {
   return (
     <div className="min-h-screen bg-[#0f1115] text-slate-300 font-sans">
       <div className="relative z-10 p-6 max-w-[1600px] mx-auto">
-        <header className="flex items-center justify-between mb-8 bg-white/5 backdrop-blur-xl border border-white/10 rounded-full px-6 py-3 shadow-2xl">
+        <header className="flex items-center justify-between mb-8 bg-white/5 backdrop-blur-xl border border-white/10 rounded-full px-6 py-3 shadow-2xl relative z-50">
           <div className="flex items-center gap-4">
             <div className="bg-[#312E81] p-1.5 rounded-full shadow-[0_0_15px_rgba(49,46,129,0.5)]">
                <Logo size={28} />
@@ -1076,26 +1194,23 @@ export const App = () => {
           </div>
 
           <nav className="hidden md:flex items-center gap-1 bg-black/20 rounded-full p-1 border border-white/5">
-            {[
-              { id: 'dashboard', label: 'Dashboard' },
-              { id: 'database', label: 'Database' },
-              { id: 'nab_log', label: 'NAB', extraClass: 'text-emerald-400 border-emerald-500/20 bg-emerald-500/20' },
-              { id: 'eod', label: 'EOD', extraClass: 'text-indigo-400 border-indigo-500/20 bg-indigo-500/20' },
-              { id: 'analytics', label: 'Analytics', extraClass: 'text-blue-400 border-blue-500/20 bg-blue-500/20' },
-              { id: 'settings', label: 'Settings' }
-            ].map(tab => (
-              <button 
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`px-5 py-2 rounded-full text-sm font-medium transition-all ${
-                  activeTab === tab.id 
-                    ? (tab.extraClass || 'bg-white/10 text-white shadow-sm') 
-                    : 'text-slate-400 hover:text-white hover:bg-white/5'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
+            {NAV_ITEMS.map(tab => {
+               const Icon = tab.icon;
+               return (
+                  <button 
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id as any)}
+                    className={`flex items-center gap-2 px-5 py-2 rounded-full text-sm font-medium transition-all ${
+                      activeTab === tab.id 
+                        ? (tab.extraClass || 'bg-white/10 text-white shadow-sm') 
+                        : 'text-slate-400 hover:text-white hover:bg-white/5'
+                    }`}
+                  >
+                    <Icon size={16} />
+                    {tab.label}
+                  </button>
+               )
+            })}
           </nav>
 
           <div className="flex items-center gap-3">
@@ -1112,6 +1227,40 @@ export const App = () => {
              </div>
           </div>
         </header>
+
+        {/* Mobile Menu Button */}
+        <button 
+           className="md:hidden fixed bottom-6 right-6 z-50 h-14 w-14 bg-indigo-600 rounded-full flex items-center justify-center shadow-2xl border border-white/20 text-white hover:bg-indigo-500 transition-colors"
+           onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+        >
+           {isMobileMenuOpen ? <X size={28} /> : <Menu size={28} />}
+        </button>
+
+        {/* Mobile Menu Overlay */}
+        {isMobileMenuOpen && (
+            <div className="fixed inset-0 z-40 bg-[#0f1115]/95 backdrop-blur-xl flex flex-col items-center justify-center space-y-6 animate-in fade-in duration-200">
+                 {NAV_ITEMS.map(tab => {
+                    const Icon = tab.icon;
+                    return (
+                        <button 
+                            key={tab.id}
+                            onClick={() => {
+                                setActiveTab(tab.id as any);
+                                setIsMobileMenuOpen(false);
+                            }}
+                            className={`flex items-center gap-4 text-xl font-bold px-8 py-4 rounded-2xl w-3/4 max-w-sm transition-all border ${
+                                activeTab === tab.id 
+                                ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg' 
+                                : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-white'
+                            }`}
+                        >
+                            <Icon size={24} />
+                            {tab.label}
+                        </button>
+                    )
+                 })}
+            </div>
+        )}
 
         <main className="w-full">
           <RowDetailModal 
@@ -1137,6 +1286,8 @@ export const App = () => {
               handleSmartSave={handleSmartSave} saveStatus={saveStatus} isSaving={isSaving}
               handleCopyEmail={handleCopyEmail} emailCopied={emailCopied} handleStartNewAudit={handleStartNewAudit}
               parsedTransactions={parsedTransactions} handleTransactionNabChange={handleTransactionNabChange}
+              handleTransactionNameChange={handleTransactionNameChange}
+              handleTransactionAmountChange={handleTransactionAmountChange}
               handleCopyField={handleCopyField} copiedField={copiedField}
               editableContent={editableContent} setEditableContent={setEditableContent}
             />
