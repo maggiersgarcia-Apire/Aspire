@@ -54,8 +54,8 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
     if (saveStatus === 'success') {
       return (
         <>
-          <RefreshCw size={12} strokeWidth={3} />
-          <span>Start New Audit</span>
+          <Check size={12} strokeWidth={3} />
+          <span>Saved</span>
         </>
       );
     }
