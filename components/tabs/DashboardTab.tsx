@@ -96,8 +96,54 @@ const useTechySound = () => {
     playTone(554.37, 'square', 0.2); // C#5
     playTone(880, 'sine', 0.2); // A5
   };
+
+  const playSaveSound = () => {
+    const ctx = initAudio();
+    const t = ctx.currentTime;
+    
+    // 1. High Tech Sweep (The "Beam up" sound)
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.type = 'sawtooth';
+    osc1.frequency.setValueAtTime(220, t);
+    osc1.frequency.exponentialRampToValueAtTime(1760, t + 0.4);
+    gain1.gain.setValueAtTime(0.1, t);
+    gain1.gain.linearRampToValueAtTime(0.1, t + 0.3);
+    gain1.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+    osc1.start(t);
+    osc1.stop(t + 0.4);
+
+    // 2. Low Impact (The "Lock" sound) - Louder base
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(150, t);
+    osc2.frequency.exponentialRampToValueAtTime(40, t + 0.2);
+    gain2.gain.setValueAtTime(0.5, t); // High volume impact
+    gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+    osc2.start(t);
+    osc2.stop(t + 0.3);
+    
+    // 3. Digital Data Flutter
+    const osc3 = ctx.createOscillator();
+    const gain3 = ctx.createGain();
+    osc3.connect(gain3);
+    gain3.connect(ctx.destination);
+    osc3.type = 'square';
+    osc3.frequency.setValueAtTime(800, t);
+    osc3.frequency.setValueAtTime(1200, t + 0.05);
+    osc3.frequency.setValueAtTime(1600, t + 0.1);
+    gain3.gain.setValueAtTime(0.05, t);
+    gain3.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+    osc3.start(t);
+    osc3.stop(t + 0.15);
+  };
   
-  return { playTick, playSuccess };
+  return { playTick, playSuccess, playSaveSound };
 };
 
 const LOADING_PHASES = [
@@ -124,7 +170,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
 
   const [progress, setProgress] = useState(0);
   const [loadingText, setLoadingText] = useState(LOADING_PHASES[0]);
-  const { playTick, playSuccess } = useTechySound();
+  const { playTick, playSuccess, playSaveSound } = useTechySound();
   const prevProcessingState = useRef(processingState);
   const animationRef = useRef<number | null>(null);
 
@@ -217,6 +263,15 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
           return <AlertTriangle size={24} className="text-amber-400" />;
       }
       return <CheckCircle size={24} className="text-lime-400" />;
+  };
+
+  const onSaveClick = () => {
+    if (saveStatus !== 'success') {
+        playSaveSound();
+        handleSmartSave();
+    } else {
+        handleStartNewAudit();
+    }
   };
 
   return (
@@ -411,7 +466,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
                     </>
                   )}
                   <button 
-                    onClick={saveStatus === 'success' ? handleStartNewAudit : handleSmartSave} 
+                    onClick={onSaveClick} 
                     disabled={isSaving || isEditing} 
                     className={`flex items-center gap-2 text-[10px] px-3 py-1.5 rounded-full uppercase tracking-wider font-bold shadow-lg transition-all duration-200 ${saveStatus === 'success' ? 'bg-emerald-500 text-white shadow-emerald-500/20 hover:bg-emerald-600' : saveStatus === 'error' || saveStatus === 'duplicate' ? 'bg-red-500 text-white shadow-red-500/20' : isEditing ? 'bg-slate-700/50 text-slate-500 cursor-not-allowed' : 'bg-slate-700 text-white hover:bg-slate-600 shadow-slate-900/20'}`}
                   >
