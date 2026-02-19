@@ -75,6 +75,91 @@ const safeString = (val: any, fallback = 'N/A'): string => {
     return str.length === 0 ? fallback : str;
 };
 
+// --- HELPER: GENERATE OUTLOOK HTML ---
+const generateOutlookHtml = (content: string) => {
+    // Basic Markdown to HTML parser tailored for Outlook Tables
+    let html = '<div style="font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000;">';
+    
+    const lines = content.split('\n');
+    let tableBuffer: string[] = [];
+    let isTable = false;
+
+    const processTable = (rows: string[]) => {
+        if (rows.length < 2) return '';
+        // Filter out separator |---|
+        const cleanRows = rows.filter(r => !r.includes('---'));
+        
+        let tableHtml = '<table style="border-collapse: collapse; width: 100%; margin-bottom: 16px; border: 1px solid #d1d5db;">';
+        
+        // Header
+        if (cleanRows.length > 0) {
+            const headerCells = cleanRows[0].split('|');
+            // Remove empty start/end if present due to markdown format | A | B |
+            if(headerCells[0].trim() === '') headerCells.shift();
+            if(headerCells.length > 0 && headerCells[headerCells.length-1].trim() === '') headerCells.pop();
+
+            tableHtml += '<thead><tr style="background-color: #f3f4f6;">';
+            headerCells.forEach(h => {
+                tableHtml += `<th style="border: 1px solid #d1d5db; padding: 8px; text-align: left; font-weight: bold; color: #111827;">${h.trim()}</th>`;
+            });
+            tableHtml += '</tr></thead><tbody>';
+            
+            // Body
+            for (let i = 1; i < cleanRows.length; i++) {
+                const rowCells = cleanRows[i].split('|');
+                if(rowCells[0].trim() === '') rowCells.shift();
+                if(rowCells.length > 0 && rowCells[rowCells.length-1].trim() === '') rowCells.pop();
+
+                tableHtml += '<tr>';
+                rowCells.forEach(c => {
+                    tableHtml += `<td style="border: 1px solid #d1d5db; padding: 8px; color: #374151; vertical-align: top;">${c.trim()}</td>`;
+                });
+                tableHtml += '</tr>';
+            }
+            tableHtml += '</tbody></table>';
+        }
+        return tableHtml;
+    };
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        
+        if (line.startsWith('|')) {
+            isTable = true;
+            tableBuffer.push(line);
+        } else {
+            if (isTable) {
+                html += processTable(tableBuffer);
+                tableBuffer = [];
+                isTable = false;
+            }
+            
+            if (line === '') {
+                html += '<br>';
+            } else {
+                // Process bolding **text**
+                let processedLine = line.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+                
+                // Headers
+                if (processedLine.startsWith('### ')) {
+                     html += `<h3 style="margin-top: 16px; margin-bottom: 8px;">${processedLine.replace('### ', '')}</h3>`;
+                } else if (processedLine.startsWith('## ')) {
+                     html += `<h2 style="margin-top: 20px; margin-bottom: 12px; border-bottom: 1px solid #eee;">${processedLine.replace('## ', '')}</h2>`;
+                } else {
+                     // Regular line
+                     html += `<div style="margin-bottom: 4px;">${processedLine}</div>`;
+                }
+            }
+        }
+    }
+    if (isTable) {
+        html += processTable(tableBuffer);
+    }
+    
+    html += '</div>';
+    return html;
+};
+
 // --- MAIN APPLICATION COMPONENT ---
 export const App = () => {
   const [receiptFiles, setReceiptFiles] = useState<FileWithPreview[]>([]);
@@ -645,11 +730,26 @@ export const App = () => {
   const handleCopyEmail = async () => {
     if (!results?.phase4) return;
     const content = isEditing ? editableContent : results.phase4;
-    // Remove asterisks to clean up formatting for Outlook plain text/simple paste
-    const cleanContent = content.replace(/\*/g, '');
-    navigator.clipboard.writeText(cleanContent);
-    setEmailCopied(true);
-    setTimeout(() => setEmailCopied(false), 2000);
+    
+    // Fallback plain text (clean)
+    const plainText = content.replace(/\*/g, '');
+    
+    // HTML for Outlook (preserve table structure)
+    const htmlContent = generateOutlookHtml(content);
+
+    try {
+        const type = "text/html";
+        const blob = new Blob([htmlContent], { type });
+        const data = [new ClipboardItem({ [type]: blob, "text/plain": new Blob([plainText], { type: "text/plain" }) })];
+        await navigator.clipboard.write(data);
+        setEmailCopied(true);
+        setTimeout(() => setEmailCopied(false), 2000);
+    } catch (e) {
+        console.error("Clipboard API failed or not supported, falling back to plain text", e);
+        navigator.clipboard.writeText(plainText);
+        setEmailCopied(true);
+        setTimeout(() => setEmailCopied(false), 2000);
+    }
   };
 
   const handleCopyField = (text: string, fieldName: string) => {
