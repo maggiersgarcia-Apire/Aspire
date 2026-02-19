@@ -574,7 +574,9 @@ export const App = () => {
   const handleCopyEmail = async () => {
     if (!results?.phase4) return;
     const content = isEditing ? editableContent : results.phase4;
-    navigator.clipboard.writeText(content);
+    // Remove asterisks to clean up formatting for Outlook plain text/simple paste
+    const cleanContent = content.replace(/\*/g, '');
+    navigator.clipboard.writeText(cleanContent);
     setEmailCopied(true);
     setTimeout(() => setEmailCopied(false), 2000);
   };

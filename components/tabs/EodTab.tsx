@@ -85,9 +85,20 @@ const EodTab: React.FC<EodTabProps> = ({
 
   const handleCopySchedule = () => {
       // Generate Markdown Table based on the calculated schedule
+      // Headers (between | |) are typically bold in Markdown viewers.
+      // Rows will be plain text. We sanitize strings to remove * just in case.
       let md = `| TIME In | TIME Out | ACTIVITY | NAME OF YP | NAME OF Staff | AMOUNT | COMMENTS/STATUS |\n| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+      
       schedule.forEach(item => {
-          md += `| ${item.timeIn} | ${item.timeOut} | ${item.activity} | ${item.yp} | ${item.staff} | ${item.amount} | ${item.status} |\n`;
+          const sTimeIn = item.timeIn;
+          const sTimeOut = item.timeOut;
+          const sActivity = item.activity.replace(/\*/g, '');
+          const sYp = (item.yp || '').replace(/\*/g, '');
+          const sStaff = (item.staff || '').replace(/\*/g, '');
+          const sAmount = (String(item.amount) || '').replace(/\*/g, '');
+          const sStatus = item.status.replace(/\*/g, '');
+          
+          md += `| ${sTimeIn} | ${sTimeOut} | ${sActivity} | ${sYp} | ${sStaff} | ${sAmount} | ${sStatus} |\n`;
       });
       
       navigator.clipboard.writeText(md);

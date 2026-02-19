@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { CreditCard, Copy, RefreshCw, ArrowRightLeft, ChevronRight, Check } from 'lucide-react';
 
 interface NabTabProps {
@@ -14,9 +14,30 @@ interface NabTabProps {
 const NabTab: React.FC<NabTabProps> = ({
   pendingTotal, pendingTx, paidTx, onCopyBatch, reportCopied, copiedField, setCopiedField
 }) => {
+  const [localCopied, setLocalCopied] = useState(false);
   
   // Calculate total for the list shown (paidTx)
   const paidTotal = paidTx.reduce((sum, tx) => sum + (parseFloat(String(tx.amount).replace(/[^0-9.-]+/g,"")) || 0), 0);
+
+  const handleCopyLog = () => {
+      // Generate Markdown Table for Paid Transactions (Log)
+      // Headers are bold by default in Markdown tables.
+      // Rows: Date, Staff Member, Category, Amount, Reference
+      let md = `| Date | Staff Member | Category | Amount | Reference |\n| :--- | :--- | :--- | :--- | :--- |\n`;
+      
+      paidTx.forEach(tx => {
+          const dateStr = new Date(tx.rawDate).toLocaleDateString('en-US');
+          const staff = (tx.staffName || '').replace(/\*/g, '').trim();
+          const amount = (String(tx.amount) || '').replace(/\*/g, '').trim();
+          const uid = (tx.uid || '').replace(/\*/g, '').trim();
+          
+          md += `| ${dateStr} | ${staff} | Transfers out | $${amount} | ${uid} |\n`;
+      });
+      
+      navigator.clipboard.writeText(md);
+      setLocalCopied(true);
+      setTimeout(() => setLocalCopied(false), 2000);
+  };
 
   return (
     <div className="flex flex-col h-[calc(100vh-140px)] gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -29,10 +50,10 @@ const NabTab: React.FC<NabTabProps> = ({
         </div>
         <div className="flex items-center gap-3">
           <button 
-             onClick={onCopyBatch}
+             onClick={handleCopyLog}
              className="flex items-center gap-2 bg-[#2d313a] hover:bg-[#374151] text-white px-4 py-2 rounded-full text-sm font-semibold transition-all border border-white/10"
           >
-             {reportCopied === 'nab' ? <Check size={16} className="text-emerald-400"/> : <Copy size={16} />}
+             {localCopied ? <Check size={16} className="text-emerald-400"/> : <Copy size={16} />}
              Copy for Outlook
           </button>
           <button className="p-2 bg-[#2d313a] hover:bg-[#374151] text-slate-400 hover:text-white rounded-full transition-colors border border-white/10">
