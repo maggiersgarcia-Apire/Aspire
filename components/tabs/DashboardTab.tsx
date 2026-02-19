@@ -274,6 +274,11 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
     }
   };
 
+  const onAuditClick = () => {
+      playSaveSound();
+      onProcess();
+  };
+
   return (
     <div className="flex flex-col lg:flex-row gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="w-full lg:w-[400px] space-y-6 flex-shrink-0">
@@ -318,7 +323,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
               </div>
             )}
             <button
-              onClick={onProcess}
+              onClick={onAuditClick}
               disabled={processingState === ProcessingState.PROCESSING || receiptFiles.length === 0}
               className={`w-full group relative flex justify-center items-center gap-3 py-4 px-6 rounded-2xl font-semibold text-white transition-all duration-300 shadow-[0_0_20px_rgba(79,70,229,0.1)]
                 ${processingState === ProcessingState.PROCESSING 
@@ -331,7 +336,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
               ) : (
                 <>
                   <Send size={18} strokeWidth={2.5} />
-                  Start Audit
+                  Audit
                 </>
               )}
             </button>
