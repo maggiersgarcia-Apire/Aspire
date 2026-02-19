@@ -833,7 +833,14 @@ export const App = () => {
                   ypName = clientLocation;
               }
 
-              let extractedUid = nabMatch ? nabMatch[1].trim() : null;
+              // PRIORITIZE RECEIPT ID MATCH IN BLOCK
+              const receiptIdMatch = block.match(/\*\*Receipt ID:\*\*\s*(.*)/);
+              let extractedUid = receiptIdMatch ? receiptIdMatch[1].trim() : null;
+              
+              if (!extractedUid || extractedUid === 'N/A') {
+                  extractedUid = nabMatch ? nabMatch[1].trim() : null;
+              }
+
               if (!extractedUid || extractedUid === 'PENDING' || extractedUid === 'N/A' || extractedUid === '') {
                   extractedUid = `BATCH-${Date.now()}-${i}-${Math.floor(Math.random() * 10000)}`;
               }
