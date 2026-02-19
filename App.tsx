@@ -521,6 +521,26 @@ export const App = () => {
       }
   };
 
+  const handleBulkDelete = async (ids: any[]) => {
+      if (confirm(`Are you sure you want to delete ${ids.length} records? This action cannot be undone.`)) {
+          try {
+              // Extract just the IDs if they are objects, though we expect simple IDs
+              const { error } = await supabase.from('audit_logs').delete().in('id', ids);
+              if (error) throw error;
+              
+              // Update local state
+              // Cast to string to ensure matching works regardless of number/string types
+              setHistoryData(prev => prev.filter(item => !ids.map(String).includes(String(item.id))));
+              return true;
+          } catch (e) {
+              console.error("Bulk delete failed", e);
+              alert("Failed to delete records.");
+              return false;
+          }
+      }
+      return false;
+  };
+
   const parseDatabaseRows = (data: any[]) => {
       const allRows: any[] = [];
       data.forEach((record) => {
@@ -1298,6 +1318,7 @@ export const App = () => {
               filteredRows={filteredDatabaseRows} searchTerm={searchTerm} setSearchTerm={setSearchTerm}
               onDownloadCSV={handleDownloadCSV} onRefresh={fetchHistory} loading={loadingHistory}
               onRowClick={handleRowClick}
+              onBulkDelete={handleBulkDelete}
             />
           )}
 
