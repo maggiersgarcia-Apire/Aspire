@@ -303,11 +303,11 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
                 <p className="text-[10px] text-slate-500 mt-2">Paying via bank transfer? Enter the reference code(s) above to update the email automatically.</p>
               </div>
               <div className="p-8">
-                <div className="bg-white rounded-xl p-8 shadow-2xl text-slate-800 selection:bg-indigo-100 selection:text-indigo-900">
+                <div className="bg-[#1c1e24]/40 rounded-xl p-8 shadow-2xl border border-white/5">
                   {isEditing ? (
-                    <textarea value={editableContent} onChange={(e) => setEditableContent(e.target.value)} className="w-full h-[400px] p-4 font-mono text-sm border border-indigo-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50 text-slate-900 resize-none" placeholder="Edit email content here..." />
+                    <textarea value={editableContent} onChange={(e) => setEditableContent(e.target.value)} className="w-full h-[400px] p-4 font-mono text-sm border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-black/20 text-slate-300 resize-none" placeholder="Edit email content here..." />
                   ) : (
-                    <MarkdownRenderer content={results.phase4} id="email-output-content" theme="light" />
+                    <MarkdownRenderer content={results.phase4} id="email-output-content" theme="dark" />
                   )}
                 </div>
               </div>

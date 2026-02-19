@@ -184,6 +184,48 @@ export const App = () => {
   const getParsedTransactions = () => {
       const content = isEditing ? editableContent : results?.phase4;
       if (!content) return [];
+
+      // Check for Table Format (Type D)
+      if (content.includes('| Staff Member |') || content.includes('|Staff Member|')) {
+         const lines = content.split('\n');
+         const tableTxs: any[] = [];
+         let isTable = false;
+         let idx = 0;
+         
+         for (const line of lines) {
+             if (line.toLowerCase().includes('| staff member')) {
+                 isTable = true;
+                 continue;
+             }
+             if (isTable && line.trim().startsWith('|') && !line.includes('---')) {
+                 const cols = line.split('|').map(c => c.trim()).filter(c => c !== '');
+                 if (cols.length >= 3) {
+                     // Columns: Staff Member | Approved By | Amount | NAB Code
+                     const staffName = cols[0];
+                     const amount = cols[2].replace('$', '').trim();
+                     let currentNabRef = cols.length > 3 ? cols[3] : '';
+                     if (currentNabRef === 'PENDING') currentNabRef = '';
+                     
+                     let formattedName = staffName;
+                     if (staffName.includes(',')) {
+                        const p = staffName.split(',');
+                        if (p.length >= 2) formattedName = `${p[1].trim()} ${p[0].trim()}`;
+                     }
+
+                     tableTxs.push({
+                         index: idx++,
+                         staffName,
+                         formattedName,
+                         amount,
+                         receiptId: 'BATCH',
+                         currentNabRef
+                     });
+                 }
+             }
+         }
+         if (tableTxs.length > 0) return tableTxs;
+      }
+
       const parts = content.split('**Staff Member:**');
       if (parts.length <= 1) {
            const unboldedParts = content.split('Staff Member:');
@@ -200,6 +242,35 @@ export const App = () => {
   const handleTransactionNabChange = (index: number, newVal: string) => {
       const content = isEditing ? editableContent : results?.phase4;
       if (!content) return;
+
+      // Check if table format
+      if (content.includes('| Staff Member |')) {
+          const lines = content.split('\n');
+          let txIndex = 0;
+          let isTable = false;
+          const newLines = lines.map(line => {
+             if (line.toLowerCase().includes('| staff member')) isTable = true;
+             
+             if (isTable && line.trim().startsWith('|') && !line.includes('Staff Member') && !line.includes('---')) {
+                 if (txIndex === index) {
+                     // Found the row, replace the last column or append it
+                     const cols = line.split('|');
+                     // cols[0] is empty (before first |), cols[1] Name, cols[2] Approver, cols[3] Amount, cols[4] NAB, cols[5] empty
+                     if (cols.length >= 5) {
+                         cols[4] = ` ${newVal} `;
+                         txIndex++;
+                         return cols.join('|');
+                     }
+                 }
+                 txIndex++;
+             }
+             return line;
+          });
+          const newContent = newLines.join('\n');
+          if (isEditing) setEditableContent(newContent);
+          else setResults({ ...results!, phase4: newContent });
+          return;
+      }
 
       const marker = '**Staff Member:**';
       const parts = content.split(marker);
@@ -598,8 +669,52 @@ export const App = () => {
     try {
       const staffBlocks = contentToSave.split('**Staff Member:**');
       const payloads: any[] = [];
+      
+      // NEW: Check for Markdown Table (Type D)
+      const hasTable = contentToSave.includes('| Staff Member |') || contentToSave.includes('|Staff Member|');
+      
+      if (hasTable && !contentToSave.includes('**Staff Member:**')) {
+          const lines = contentToSave.split('\n');
+          const clientMatch = contentToSave.match(/\*\*Client \/ Location:\*\*\s*(.*?)(?:\n|$)/);
+          const globalClient = clientMatch ? clientMatch[1].trim() : 'N/A';
+          let globalYp = 'N/A';
+          if (globalClient !== 'N/A' && globalClient.includes('/')) globalYp = globalClient.split('/')[0].trim();
+          else if (globalClient !== 'N/A') globalYp = globalClient;
 
-      if (staffBlocks.length > 1) {
+          let txIndex = 0;
+          for (const line of lines) {
+              if (line.trim().startsWith('|') && !line.includes('Staff Member') && !line.includes('---')) {
+                   const cols = line.split('|').map(c => c.trim()).filter(c => c !== '');
+                   if (cols.length >= 4) {
+                       // Name | Approver | Amount | Nab
+                       const staffName = cols[0];
+                       const amountRaw = cols[2].replace('$', '');
+                       let extractedUid = cols[3];
+                       if (extractedUid === 'PENDING' || extractedUid === '') {
+                           extractedUid = `BATCH-${Date.now()}-${txIndex}-${Math.floor(Math.random()*1000)}`;
+                       }
+                       
+                       payloads.push({
+                           uid: extractedUid,
+                           time_stamp_log: batchTimestamp,
+                           staff_name: safeString(staffName),
+                           amount: safeNumber(amountRaw),
+                           total_amount: safeNumber(amountRaw),
+                           client_location: safeString(globalClient),
+                           yp_name: safeString(globalYp),
+                           expense_type: 'Batch Request',
+                           product_name: 'Petty Cash / Reimbursement',
+                           date_processed: batchTimestamp,
+                           nab_code: extractedUid,
+                           full_email_content: contentToSave,
+                           created_at: batchTimestamp,
+                           receipt_date: new Date().toLocaleDateString('en-AU')
+                       });
+                       txIndex++;
+                   }
+              }
+          }
+      } else if (staffBlocks.length > 1) {
           for (let i = 1; i < staffBlocks.length; i++) {
               const block = staffBlocks[i];
               const staffNameLine = block.split('\n')[0].trim();

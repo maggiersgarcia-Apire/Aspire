@@ -181,25 +181,26 @@ I am writing to confirm that your reimbursement request has been successfully pr
 2. Identify the **Requester** (the person who sent the email/request).
 3. Identify every **Beneficiary** (Staff Member) and their **Amount**.
 4. **CRITICAL:** Identify the **Client / Location** (e.g., Wagga, Newcastle, Tamworth). If not explicitly stated, infer it or use "General".
-5. Generate a **Separate Block** for EACH beneficiary found in the request.
-6. Each block MUST have its own "NAB Code" field set to "PENDING".
-7. Use the format [Last Name, First Name] for names.
+5. **Generate a Markdown Table** listing all beneficiaries.
+6. The table MUST have these exact columns: **Staff Member**, **Approved By**, **Amount**, **NAB Code**.
+7. Set "NAB Code" to "PENDING" for all entries.
+8. Use the format [Last Name, First Name] for names.
+9. Include "**Client / Location:** [Location]" above the table.
 
 **Template:**
 Hi,
 
 I hope this message finds you well.
 
-I am writing to confirm that your reimbursement request has been successfully processed today.
+I am writing to confirm that your reimbursement requests have been successfully processed today.
 
 **Client / Location:** [Extracted Location (e.g. Wagga, Newcastle)]
 
-[REPEAT THIS BLOCK FOR EVERY BENEFICIARY FOUND]
-**Staff Member:** [Beneficiary Last Name, First Name]
-**Approved By:** [Requester Last Name, First Name]
-**Amount:** $[Amount]
-**NAB Code:** PENDING
-[END REPEAT]
+| Staff Member | Approved By | Amount | NAB Code |
+| :--- | :--- | :--- | :--- |
+| [Beneficiary Last Name, First Name] | [Requester Last Name, First Name] | $[Amount] | PENDING |
+| [Beneficiary Last Name, First Name] | [Requester Last Name, First Name] | $[Amount] | PENDING |
+[Add more rows as needed]
 
 ---
 
