@@ -52,7 +52,7 @@ const EodTab: React.FC<EodTabProps> = ({
         return {
             timeIn: timeIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
             timeOut: timeOut.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
-            activity: 'Reimbursement',
+            activity: 'REIMBURSEMENT',
             yp: row.ypName || 'N/A',
             staff: row.staffName,
             amount: row.amount,
@@ -83,27 +83,49 @@ const EodTab: React.FC<EodTabProps> = ({
     return items;
   }, [rows, date]);
 
-  const handleCopySchedule = () => {
-      // Generate Markdown Table based on the calculated schedule
-      // Headers (between | |) are typically bold in Markdown viewers.
-      // Rows will be plain text. We sanitize strings to remove * just in case.
-      let md = `| TIME In | TIME Out | ACTIVITY | NAME OF YP | NAME OF Staff | AMOUNT | COMMENTS/STATUS |\n| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
-      
-      schedule.forEach(item => {
-          const sTimeIn = item.timeIn;
-          const sTimeOut = item.timeOut;
-          const sActivity = item.activity.replace(/\*/g, '');
-          const sYp = (item.yp || '').replace(/\*/g, '');
-          const sStaff = (item.staff || '').replace(/\*/g, '');
-          const sAmount = (String(item.amount) || '').replace(/\*/g, '');
-          const sStatus = item.status.replace(/\*/g, '');
-          
-          md += `| ${sTimeIn} | ${sTimeOut} | ${sActivity} | ${sYp} | ${sStaff} | ${sAmount} | ${sStatus} |\n`;
-      });
-      
-      navigator.clipboard.writeText(md);
-      setLocalCopied(true);
-      setTimeout(() => setLocalCopied(false), 2000);
+  const handleCopySchedule = async () => {
+      // Generate Professional HTML Table (Light Theme, Black Text, Standard Borders)
+      // This is optimized for pasting into Outlook/Word as a clean professional table.
+      const htmlContent = `
+        <table style="width: 100%; border-collapse: collapse; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000;">
+          <thead>
+            <tr style="text-align: left;">
+              <th style="border: 1px solid #000000; padding: 4px 8px; font-weight: bold; background-color: #ffffff;">TIME IN</th>
+              <th style="border: 1px solid #000000; padding: 4px 8px; font-weight: bold; background-color: #ffffff;">TIME OUT</th>
+              <th style="border: 1px solid #000000; padding: 4px 8px; font-weight: bold; background-color: #ffffff;">ACTIVITY</th>
+              <th style="border: 1px solid #000000; padding: 4px 8px; font-weight: bold; background-color: #ffffff;">NAME OF YP</th>
+              <th style="border: 1px solid #000000; padding: 4px 8px; font-weight: bold; background-color: #ffffff;">NAME OF STAFF</th>
+              <th style="border: 1px solid #000000; padding: 4px 8px; font-weight: bold; background-color: #ffffff;">AMOUNT</th>
+              <th style="border: 1px solid #000000; padding: 4px 8px; font-weight: bold; background-color: #ffffff;">COMMENTS / STATUS</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${schedule.map(item => `
+              <tr>
+                <td style="border: 1px solid #000000; padding: 4px 8px;">${item.timeIn}</td>
+                <td style="border: 1px solid #000000; padding: 4px 8px;">${item.timeOut}</td>
+                <td style="border: 1px solid #000000; padding: 4px 8px;">${item.activity}</td>
+                <td style="border: 1px solid #000000; padding: 4px 8px;">${item.yp}</td>
+                <td style="border: 1px solid #000000; padding: 4px 8px; text-transform: uppercase;">${item.staff}</td>
+                <td style="border: 1px solid #000000; padding: 4px 8px;">${item.amount ? '$' + item.amount.replace('$','') : ''}</td>
+                <td style="border: 1px solid #000000; padding: 4px 8px;">${item.status}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+
+      try {
+        const type = "text/html";
+        const blob = new Blob([htmlContent], { type });
+        const data = [new ClipboardItem({ [type]: blob })];
+        await navigator.clipboard.write(data);
+        setLocalCopied(true);
+        setTimeout(() => setLocalCopied(false), 2000);
+      } catch (e) {
+        console.error("Clipboard API failed, fallback not available for formatted HTML", e);
+        alert("Failed to copy formatted table. Your browser might not support direct HTML copying.");
+      }
   };
 
   return (
@@ -178,15 +200,15 @@ const EodTab: React.FC<EodTabProps> = ({
 
                      return (
                         <div key={i} className={`grid grid-cols-12 gap-4 px-6 py-3 border-b border-white/5 items-center hover:bg-white/5 transition-colors ${isIdle ? 'opacity-50' : ''}`}>
-                           <div className="col-span-1 text-sm font-medium text-slate-500 font-mono text-center">{item.timeIn}</div>
-                           <div className="col-span-1 text-sm font-medium text-slate-500 font-mono text-center">{item.timeOut}</div>
-                           <div className={`col-span-2 text-sm font-bold uppercase ${isIdle ? 'text-slate-400' : 'text-white'}`}>
+                           <div className="col-span-1 text-sm text-slate-500 font-mono text-center">{item.timeIn}</div>
+                           <div className="col-span-1 text-sm text-slate-500 font-mono text-center">{item.timeOut}</div>
+                           <div className={`col-span-2 text-sm uppercase ${isIdle ? 'text-slate-400' : 'text-white'}`}>
                                {item.activity}
                            </div>
                            <div className="col-span-2 text-sm text-slate-300 truncate" title={item.yp}>{item.yp}</div>
-                           <div className="col-span-2 text-sm font-bold text-slate-200 uppercase truncate" title={item.staff}>{item.staff}</div>
-                           <div className="col-span-1 text-sm font-medium text-emerald-400 font-mono text-right">{item.amount ? `$${item.amount}` : ''}</div>
-                           <div className={`col-span-3 text-sm truncate pl-4 ${isMismatch ? 'text-red-400 font-medium' : 'text-slate-500'}`}>
+                           <div className="col-span-2 text-sm text-slate-200 uppercase truncate" title={item.staff}>{item.staff}</div>
+                           <div className="col-span-1 text-sm text-emerald-400 font-mono text-right">{item.amount ? `$${item.amount.replace('$','')}` : ''}</div>
+                           <div className={`col-span-3 text-sm truncate pl-4 ${isMismatch ? 'text-red-400' : 'text-slate-500'}`}>
                                {item.status}
                            </div>
                         </div>

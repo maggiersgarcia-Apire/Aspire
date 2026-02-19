@@ -19,24 +19,49 @@ const NabTab: React.FC<NabTabProps> = ({
   // Calculate total for the list shown (paidTx)
   const paidTotal = paidTx.reduce((sum, tx) => sum + (parseFloat(String(tx.amount).replace(/[^0-9.-]+/g,"")) || 0), 0);
 
-  const handleCopyLog = () => {
-      // Generate Markdown Table for Paid Transactions (Log)
-      // Headers are bold by default in Markdown tables.
-      // Rows: Date, Staff Member, Category, Amount, Reference
-      let md = `| Date | Staff Member | Category | Amount | Reference |\n| :--- | :--- | :--- | :--- | :--- |\n`;
-      
-      paidTx.forEach(tx => {
-          const dateStr = new Date(tx.rawDate).toLocaleDateString('en-US');
-          const staff = (tx.staffName || '').replace(/\*/g, '').trim();
-          const amount = (String(tx.amount) || '').replace(/\*/g, '').trim();
-          const uid = (tx.uid || '').replace(/\*/g, '').trim();
-          
-          md += `| ${dateStr} | ${staff} | Transfers out | $${amount} | ${uid} |\n`;
-      });
-      
-      navigator.clipboard.writeText(md);
-      setLocalCopied(true);
-      setTimeout(() => setLocalCopied(false), 2000);
+  const handleCopyLog = async () => {
+      // Generate HTML Table for Outlook
+      const htmlContent = `
+        <table style="width: 100%; border-collapse: collapse; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000;">
+          <thead>
+            <tr style="text-align: left;">
+              <th style="border: 1px solid #000000; padding: 4px 8px; font-weight: bold; background-color: #ffffff;">Date</th>
+              <th style="border: 1px solid #000000; padding: 4px 8px; font-weight: bold; background-color: #ffffff;">Staff Member</th>
+              <th style="border: 1px solid #000000; padding: 4px 8px; font-weight: bold; background-color: #ffffff;">NAB CODE</th>
+              <th style="border: 1px solid #000000; padding: 4px 8px; font-weight: bold; background-color: #ffffff; text-align: right;">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${paidTx.map(tx => {
+                const dateStr = new Date(tx.rawDate).toLocaleDateString('en-US');
+                const staff = (tx.staffName || '').replace(/\*/g, '').trim();
+                const amount = (String(tx.amount) || '').replace(/\*/g, '').trim();
+                const uid = (tx.uid || '').replace(/\*/g, '').trim();
+
+                return `
+                  <tr>
+                    <td style="border: 1px solid #000000; padding: 4px 8px;">${dateStr}</td>
+                    <td style="border: 1px solid #000000; padding: 4px 8px;">${staff}</td>
+                    <td style="border: 1px solid #000000; padding: 4px 8px;">${uid}</td>
+                    <td style="border: 1px solid #000000; padding: 4px 8px; text-align: right;">$${amount}</td>
+                  </tr>
+                `;
+            }).join('')}
+          </tbody>
+        </table>
+      `;
+
+      try {
+        const type = "text/html";
+        const blob = new Blob([htmlContent], { type });
+        const data = [new ClipboardItem({ [type]: blob })];
+        await navigator.clipboard.write(data);
+        setLocalCopied(true);
+        setTimeout(() => setLocalCopied(false), 2000);
+      } catch (e) {
+        console.error("Clipboard API failed", e);
+        alert("Failed to copy formatted table. Your browser might not support direct HTML copying.");
+      }
   };
 
   return (
@@ -108,7 +133,7 @@ const NabTab: React.FC<NabTabProps> = ({
            <div className="grid grid-cols-12 gap-4 px-6 py-4 border-b border-white/10 bg-white/5">
               <div className="col-span-2 text-xs font-bold text-slate-400 uppercase tracking-wide">Date</div>
               <div className="col-span-5 text-xs font-bold text-slate-400 uppercase tracking-wide">Staff Member</div>
-              <div className="col-span-3 text-xs font-bold text-slate-400 uppercase tracking-wide">Category</div>
+              <div className="col-span-3 text-xs font-bold text-slate-400 uppercase tracking-wide">NAB CODE</div>
               <div className="col-span-2 text-right text-xs font-bold text-slate-400 uppercase tracking-wide pr-8">Amount</div>
            </div>
 
@@ -122,7 +147,7 @@ const NabTab: React.FC<NabTabProps> = ({
                  paidTx.map((tx, i) => (
                     <div key={i} className="grid grid-cols-12 gap-4 px-6 py-5 items-center hover:bg-white/5 transition-colors group">
                        {/* Date */}
-                       <div className="col-span-2 text-sm text-slate-400 font-medium">
+                       <div className="col-span-2 text-sm text-white">
                           {new Date(tx.rawDate).toLocaleDateString('en-US')}
                        </div>
 
@@ -132,21 +157,20 @@ const NabTab: React.FC<NabTabProps> = ({
                              <ArrowRightLeft size={16} />
                           </div>
                           <div className="min-w-0">
-                             <p className="text-sm font-bold text-white uppercase truncate">{tx.staffName}</p>
-                             <p className="text-xs text-slate-500 font-mono truncate">{tx.uid}</p>
+                             <p className="text-sm text-white uppercase truncate">{tx.staffName}</p>
                           </div>
                        </div>
 
-                       {/* Category */}
+                       {/* NAB Code */}
                        <div className="col-span-3">
-                          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-white/10 text-slate-300 border border-white/5">
-                             Transfers out
+                          <span className="font-mono text-sm text-white">
+                             {tx.uid}
                           </span>
                        </div>
 
                        {/* Amount & Action */}
                        <div className="col-span-2 flex items-center justify-end gap-4">
-                          <span className="text-sm font-bold text-white">${tx.amount}</span>
+                          <span className="text-sm text-white">${tx.amount}</span>
                           <ChevronRight size={16} className="text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity" />
                        </div>
                     </div>

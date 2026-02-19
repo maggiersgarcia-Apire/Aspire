@@ -758,9 +758,9 @@ export const App = () => {
     setTimeout(() => setCopiedField(null), 2000);
   };
 
-  const handleSaveToCloud = async (contentOverride?: string) => {
+  const handleSaveToCloud = async (contentOverride?: string): Promise<boolean> => {
     const contentToSave = contentOverride || (isEditing ? editableContent : results?.phase4);
-    if (!contentToSave) return;
+    if (!contentToSave) return false;
     
     setIsSaving(true);
     setSaveStatus('idle');
@@ -865,7 +865,12 @@ export const App = () => {
                 ypName = clientLocation;
           }
 
-          let extractedUid = nabMatch ? nabMatch[1].trim() : (receiptIdMatch ? receiptIdMatch[1].trim() : null);
+          // PRIORITIZE RECEIPT ID FOR UID
+          let extractedUid = receiptIdMatch ? receiptIdMatch[1].trim() : null;
+          if (!extractedUid || extractedUid === 'N/A') {
+              extractedUid = nabMatch ? nabMatch[1].trim() : null;
+          }
+
           const isDiscrepancy = contentToSave.toLowerCase().includes('discrepancy') || contentToSave.toLowerCase().includes('mismatch') || contentToSave.includes('STATUS: PENDING');
 
           if (!extractedUid || extractedUid === 'PENDING' || extractedUid === 'N/A' || extractedUid === '') {
@@ -893,35 +898,47 @@ export const App = () => {
           }
           const dateMatch = contentToSave.match(/(\d{2}\/\d{2}\/\d{2,4})/);
           const receiptDate = dateMatch ? dateMatch[1] : new Date().toLocaleDateString('en-AU');
+          const nabCodeToSave = nabMatch ? nabMatch[1].trim() : 'PENDING';
 
           payloads.push({
               uid: extractedUid, time_stamp_log: batchTimestamp, staff_name: safeString(staffName),
               amount: safeNumber(amountRaw), total_amount: safeNumber(amountRaw), client_location: safeString(clientLocation),
               yp_name: safeString(ypName), expense_type: safeString(expenseType), product_name: safeString(productName),
-              date_processed: batchTimestamp, nab_code: extractedUid, full_email_content: contentToSave, created_at: batchTimestamp, receipt_date: receiptDate
+              date_processed: batchTimestamp, nab_code: nabCodeToSave, full_email_content: contentToSave, created_at: batchTimestamp, receipt_date: receiptDate
           });
       }
       const { error } = await supabase.from('audit_logs').upsert(payloads, { onConflict: 'uid' }).select();
       if (error) throw error;
       setSaveStatus('success');
       fetchHistory();
+      return true;
     } catch (error: any) {
       console.error("Supabase Save Error:", error);
       alert("Error saving data. " + error.message);
       setSaveStatus('error');
+      return false;
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleSmartSave = () => {
+  const handleSmartSave = async () => {
     const hasTransactions = parsedTransactions.length > 0;
     const allHaveRef = parsedTransactions.every(tx => !!tx.currentNabRef && tx.currentNabRef.trim() !== '' && tx.currentNabRef !== 'PENDING');
     const status = (hasTransactions && allHaveRef) ? 'PAID' : 'PENDING';
     const tag = status === 'PENDING' ? '\n\n<!-- STATUS: PENDING -->' : '\n\n<!-- STATUS: PAID -->';
     const baseContent = isEditing ? editableContent : results?.phase4 || '';
     const finalContent = baseContent.includes('<!-- STATUS:') ? baseContent : baseContent + tag;
-    handleSaveToCloud(finalContent);
+    
+    // Attempt save (saves pending or paid)
+    const success = await handleSaveToCloud(finalContent);
+
+    // Only auto-reset if successfully saved AND fully paid (has references)
+    if (success && hasTransactions && allHaveRef) {
+        setTimeout(() => {
+            handleStartNewAudit();
+        }, 1500); // 1.5s delay to show success checkmark before clearing
+    }
   };
 
   const handleProcess = async () => {
