@@ -111,6 +111,38 @@ const FileUpload: React.FC<FileUploadProps> = ({
     }
   };
 
+  const handleManualPasteClick = async (e: React.MouseEvent) => {
+      e.stopPropagation();
+      try {
+          // Modern API for reading clipboard on click
+          // Note: This often requires a secure context (HTTPS) and user permission.
+          const clipboardItems = await navigator.clipboard.read();
+          const extractedFiles: File[] = [];
+          
+          for (const item of clipboardItems) {
+              // We prioritize images for "screenshot capture"
+              const imageType = item.types.find(t => t.startsWith('image/'));
+              if (imageType) {
+                  const blob = await item.getType(imageType);
+                  extractedFiles.push(new File([blob], `pasted-${Date.now()}.png`, { type: imageType }));
+              }
+          }
+          
+          if (extractedFiles.length > 0) {
+              processFiles(extractedFiles);
+          } else {
+             // If no images, focus the container so user can try Ctrl+V or manual paste logic via event might catch it differently
+             containerRef.current?.focus();
+             // alert("No image data found in clipboard."); 
+          }
+      } catch (err) {
+          console.error("Clipboard read error:", err);
+          // If permission denied or API unsupported, focus container to encourage Ctrl+V
+          containerRef.current?.focus();
+          alert("Browser blocked clipboard access. Please click the box and press Ctrl+V.");
+      }
+  };
+
   const getFileIcon = (file: File) => {
       if (file.type.startsWith('image/')) {
           return <img src={(file as FileWithPreview).preview} alt={file.name} className="h-full w-full object-cover" />;
@@ -162,7 +194,7 @@ const FileUpload: React.FC<FileUploadProps> = ({
 
           <div className="space-y-1">
             <p className="text-sm font-medium text-slate-300">
-              <span className="text-indigo-400 hover:text-indigo-300 underline decoration-dotted underline-offset-2">Upload files</span>, Paste, or Drag & Drop
+              <span className="text-indigo-400 hover:text-indigo-300 underline decoration-dotted underline-offset-2">Upload files</span>, <span onClick={handleManualPasteClick} className="text-emerald-400 hover:text-emerald-300 underline cursor-pointer font-semibold">Paste</span>, or Drag & Drop
             </p>
             <p className="text-xs text-slate-500">
                {multiple ? "Multiple files allowed" : "Single file"} • Ctrl+V to paste
