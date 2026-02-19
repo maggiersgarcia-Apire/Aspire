@@ -790,6 +790,8 @@ export const App = () => {
                        const staffName = cols[0];
                        const amountRaw = cols[2].replace('$', '');
                        let extractedUid = cols[3];
+                       const nabVal = cols[3];
+                       
                        if (extractedUid === 'PENDING' || extractedUid === '') {
                            extractedUid = `BATCH-${Date.now()}-${txIndex}-${Math.floor(Math.random()*1000)}`;
                        }
@@ -805,7 +807,7 @@ export const App = () => {
                            expense_type: 'Batch Request',
                            product_name: 'Petty Cash / Reimbursement',
                            date_processed: batchTimestamp,
-                           nab_code: extractedUid,
+                           nab_code: nabVal || 'PENDING',
                            full_email_content: contentToSave,
                            created_at: batchTimestamp,
                            receipt_date: new Date().toLocaleDateString('en-AU')
@@ -833,7 +835,7 @@ export const App = () => {
                   ypName = clientLocation;
               }
 
-              // PRIORITIZE RECEIPT ID MATCH IN BLOCK
+              // PRIORITIZE RECEIPT ID MATCH IN BLOCK FOR UID
               const receiptIdMatch = block.match(/\*\*Receipt ID:\*\*\s*(.*)/);
               let extractedUid = receiptIdMatch ? receiptIdMatch[1].trim() : null;
               
@@ -846,12 +848,15 @@ export const App = () => {
               }
               const dateMatch = block.match(/(\d{2}\/\d{2}\/\d{2,4})/);
               const receiptDate = dateMatch ? dateMatch[1] : new Date().toLocaleDateString('en-AU');
+              
+              // EXPLICIT NAB CODE EXTRACTION
+              const nabCodeToSave = nabMatch ? nabMatch[1].trim() : 'PENDING';
 
               payloads.push({
                   uid: extractedUid, time_stamp_log: batchTimestamp, staff_name: safeString(staffName),
                   amount: safeNumber(amountRaw), total_amount: safeNumber(amountRaw), client_location: safeString(clientLocation),
                   yp_name: safeString(ypName), expense_type: 'Batch Request', product_name: 'Petty Cash / Reimbursement',
-                  date_processed: batchTimestamp, nab_code: extractedUid, full_email_content: contentToSave, created_at: batchTimestamp, receipt_date: receiptDate
+                  date_processed: batchTimestamp, nab_code: nabCodeToSave, full_email_content: contentToSave, created_at: batchTimestamp, receipt_date: receiptDate
               });
           }
       } else {

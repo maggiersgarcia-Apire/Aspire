@@ -55,6 +55,7 @@ const DatabaseTab: React.FC<DatabaseTabProps> = ({
                 <tr>
                   <th className="px-4 py-4 border-b border-white/10 whitespace-nowrap min-w-[120px]">UID</th>
                   <th className="px-4 py-4 border-b border-white/10 whitespace-nowrap min-w-[150px]">Time Stamp</th>
+                  <th className="px-4 py-4 border-b border-white/10 whitespace-nowrap min-w-[150px]">Nab Code</th>
                   <th className="px-4 py-4 border-b border-white/10 whitespace-nowrap min-w-[200px]">Client / Location</th>
                   <th className="px-4 py-4 border-b border-white/10 whitespace-nowrap min-w-[150px]">YP NAME</th>
                   <th className="px-4 py-4 border-b border-white/10 whitespace-nowrap min-w-[150px]">Staff Name</th>
@@ -64,7 +65,6 @@ const DatabaseTab: React.FC<DatabaseTabProps> = ({
                   <th className="px-4 py-4 border-b border-white/10 whitespace-nowrap text-right min-w-[100px]">Amount</th>
                   <th className="px-4 py-4 border-b border-white/10 whitespace-nowrap text-right min-w-[100px] bg-white/5">Total Amount</th>
                   <th className="px-4 py-4 border-b border-white/10 whitespace-nowrap min-w-[120px]">Date Processed</th>
-                  <th className="px-4 py-4 border-b border-white/10 whitespace-nowrap min-w-[150px]">Nab Code</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
@@ -76,6 +76,7 @@ const DatabaseTab: React.FC<DatabaseTabProps> = ({
                   >
                     <td className="px-4 py-3 border-r border-white/5 whitespace-nowrap font-mono">{row.uid}</td>
                     <td className="px-4 py-3 border-r border-white/5 whitespace-nowrap">{row.timestamp}</td>
+                    <td className="px-4 py-3 border-r border-white/5 whitespace-nowrap font-mono text-emerald-400">{row.nabCode}</td>
                     <td className="px-4 py-3 border-r border-white/5 whitespace-nowrap truncate max-w-[250px]" title={row.ypName}>{row.ypName}</td>
                     <td className="px-4 py-3 border-r border-white/5 whitespace-nowrap">{row.youngPersonName}</td>
                     <td className="px-4 py-3 border-r border-white/5 whitespace-nowrap uppercase">{row.staffName}</td>
@@ -84,8 +85,7 @@ const DatabaseTab: React.FC<DatabaseTabProps> = ({
                     <td className="px-4 py-3 border-r border-white/5 whitespace-nowrap">{row.receiptDate}</td>
                     <td className="px-4 py-3 border-r border-white/5 whitespace-nowrap text-right font-mono">{row.amount}</td>
                     <td className="px-4 py-3 border-r border-white/5 whitespace-nowrap text-right font-mono font-bold bg-white/5">{row.totalAmount}</td>
-                    <td className="px-4 py-3 border-r border-white/5 whitespace-nowrap">{row.dateProcessed}</td>
-                    <td className="px-4 py-3 whitespace-nowrap font-mono">{row.nabCode}</td>
+                    <td className="px-4 py-3 whitespace-nowrap">{row.dateProcessed}</td>
                   </tr>
                 ))}
               </tbody>
